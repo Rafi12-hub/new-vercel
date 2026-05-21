@@ -2,7 +2,7 @@
   <img src="frontend/public/logos/rgm-logo.jpeg" alt="RGMCET Logo" width="100"/>
 </div>
 
-# RGMCET Compiler
+# RGMCET Compiler – Web‑Based Programming Lab & Compiler
 
 ![React](https://img.shields.io/badge/React-Frontend-blue)
 ![Node](https://img.shields.io/badge/Node.js-Backend-green)
@@ -11,7 +11,7 @@
 ## Rajeev Gandhi Memorial College Of Engineering And Technology
 ### Department of Computer Science and Engineering
 
-A modern web-based compiler and programming laboratory management system designed for students, faculty, lab admins, and super administrators.
+A cutting‑edge, web‑based programming laboratory platform that empowers students, faculty, lab administrators, and super administrators to collaborate, code, and manage labs efficiently.
 
 ---
 
@@ -36,56 +36,44 @@ The system provides role-based access for:
 
 ---
 
-## ✨ Main Features
+## ✨ Key Features
 
-### 🎓 Student Features
-- Secure Login
-- Weekly Programming Tasks
-- Online Code Compiler
-- Progress Tracking
-- Accuracy Analytics
-- Submission History
-- Notifications
-- Real-Time Dashboard
+### 🎓 Student Experience
+- Secure authentication
+- Weekly coding challenges
+- Integrated online compiler
+- Detailed progress & accuracy analytics
+- Submission history with notifications
+- Real‑time dashboard for instant insights
 
-### 👨‍🏫 Faculty Features
-- Faculty Login
-- Manage Assigned Students
-- Add/Edit Questions
-- Monitor Student Progress
-- Schedule Labs
-- Track Weekly Completion
-- Subject-Based Access
+### 👨‍🏫 Faculty Dashboard
+- Faculty‑only login
+- Assign and manage student groups
+- Create, edit, and schedule questions
+- Monitor student progress and weekly completion
+- Subject‑based access controls
 
-### 🛠️ Admin Features
-- Student Management
-- Faculty Management
-- Lab Management
-- Reports & Analytics
-- Dashboard Monitoring
-- Question Management
+### 🛠️ Administrative Tools
+- Comprehensive student and faculty management
+- Lab session scheduling and oversight
+- Advanced reporting & analytics with visual dashboards
+- Centralized question bank management
 
-### 👑 Super Admin Features
-- Add Faculty
-- Assign Subjects
-- Assign Labs
-- Set Lab Timings
-- Manage Weekly Unlock System
-- Full System Access
-- Role Management
+### 👑 Super Administrator Control
+- Full user and role management
+- Subject and lab assignment
+- Configurable lab timing and weekly unlock system
+- Complete system access with audit capabilities
 
 ---
 
-## 🚀 Advanced Features
-
-- Real-Time Notifications
-- Automated Weekly Unlock System
-- Dynamic Analytics
-- Live Charts & Reports
-- Role-Based Authentication
-- Responsive Modern UI
-- Dark Theme Dashboard
-- Secure Database Management
+## 🚀 Advanced Capabilities
+- Instant real‑time notifications
+- Automated weekly unlock mechanisms
+- Dynamic analytics with live charts and reports
+- Robust role‑based authentication
+- Fully responsive modern UI with dark‑mode support
+- Secure, scalable database management
 
 ---
 
@@ -208,25 +196,23 @@ JUDGE0_API_KEY=YOUR_RAPIDAPI_KEY_HERE
 
 ---
 
-## 🔮 Future Enhancements
-
-- AI Code Evaluation
-- Plagiarism Detection
-- Leaderboard System
-- PDF Report Export
-- Email Notifications
-- Online Viva Module
-- Contest Mode
+## 📈 Upcoming Features
+- AI‑driven code evaluation and feedback
+- Integrated plagiarism detection
+- Competitive leaderboard system
+- Exportable PDF reports
+- Automated email notifications
+- Virtual viva (oral exam) module
+- Contest mode for coding competitions
 
 ---
 
-## 🌟 Benefits of the Project
-
-- Simplifies lab management
-- Tracks student coding progress
-- Reduces manual work
-- Automates weekly programming workflow
-- Provides centralized monitoring system
+## 🌟 Project Advantages
+- Streamlined lab management workflow
+- Comprehensive tracking of student coding progress
+- Significant reduction in manual administrative tasks
+- Automated weekly programming cycles
+- Centralized dashboard for real‑time monitoring and insights
 
 ---
 

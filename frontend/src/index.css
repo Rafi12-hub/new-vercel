@@ -3,49 +3,39 @@
 @tailwind utilities;
 
 :root {
-  --primary: #9d4edd; /* Purple Neon */
-  --primary-hover: #c77dff;
-  --accent-yellow: #3a86ff; /* Replaced with Blue for the palette */
-  --accent-cyan: #00f5d4; /* Cyan */
-  --accent-emerald: #10b981; /* Emerald */
+  --primary: #8254ee; /* From requested palette */
+  --primary-hover: #9f7dff;
+  --accent-yellow: #e7c965; /* From requested palette */
+  --accent-cyan: #c1cfc1; /* From requested palette */
   
   --bg-pearl: #F8FAFC;
-  --bg-lavender: #EEF2FF;
-  --bg-soft-purple: #DDD6FE;
-  --bg-light-indigo: #C4B5FD;
-  --bg-glass-blue: #E0F2FE;
-  --bg-sky-cyan: #BAE6FD;
-  --bg-glass-white: #F5F3FF;
   
-  --surface-light: rgba(255, 255, 255, 0.15);
-  --surface-dark: rgba(30, 30, 30, 0.75); /* Better dark surface */
-  --text-light: #1E293B;
-  --text-muted-light: #475569;
-  --text-dark: #f8f9fa; /* High visibility in dark mode */
-  --text-heading-dark: #ffffff; 
-  --text-muted-dark: #ced4da; /* High visibility muted text */
-  --text-accent: #00f5d4; /* Cyan accent for text */
+  --surface-light: rgba(255, 255, 255, 0.85);
+  --surface-dark: #3b353c; /* From requested palette */
+  --text-light: #090909; /* From requested palette */
+  --text-muted-light: #82717b; /* From requested palette */
+  --text-dark: #c1cfc1; /* From requested palette */
+  --text-heading-dark: #e7c965; 
+  --text-muted-dark: #82717b;
   
-  --border-light: rgba(255, 255, 255, 0.25);
-  --border-dark: rgba(255, 255, 255, 0.22);
+  --border-light: rgba(9, 9, 9, 0.1);
+  --border-dark: rgba(193, 207, 193, 0.15);
   
-  --accent: #10b981; /* Emerald */
+  --accent: #8254ee;
   --error: #ef4444;
   
-  --gradient-primary: linear-gradient(135deg, #9d4edd 0%, #3a86ff 100%);
-  --glass-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.05) 100%);
+  --gradient-primary: linear-gradient(135deg, #8254ee 0%, #82717b 100%);
+  --glass-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.02) 100%);
   --glass-border: 1px solid var(--border);
 }
 
 [data-theme='dark'] {
-  --bg: #121212; /* Dark Gray background */
-  --surface: rgba(30, 30, 30, 0.75);
-  --text: #f8f9fa; /* Ensure text is white/gray */
-  --text-secondary: #e9ecef;
-  --text-accent: #00f5d4; /* Cyan */
-  --border: rgba(255, 255, 255, 0.15);
-  background: linear-gradient(135deg, #121212, #1a1a2e, #16213e);
-  background-attachment: fixed;
+  --bg: #090909; /* Dark Gray background */
+  --surface: #3b353c;
+  --text: #c1cfc1;
+  --text-secondary: #82717b;
+  --border: rgba(193, 207, 193, 0.15);
+  background: #090909; /* Flat dark background per leetcode style */
 }
 
 [data-theme='light'] {
@@ -53,10 +43,7 @@
   --surface: var(--surface-light);
   --text: var(--text-light);
   --border: var(--border-light);
-  background: radial-gradient(circle at 15% 50%, rgba(221, 214, 254, 0.5), transparent 25%),
-              radial-gradient(circle at 85% 30%, rgba(186, 230, 253, 0.5), transparent 25%),
-              var(--bg-pearl);
-  background-attachment: fixed;
+  background: var(--bg-pearl);
 }
 
 body {
@@ -137,9 +124,14 @@ body {
   left: -100%;
   width: 50%;
   height: 100%;
-  background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.3) 50%, rgba(255,255,255,0) 100%);
+  background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0) 100%);
   transform: skewX(-20deg);
   animation: shine 6s infinite;
+}
+
+/* Remove mirror effect from notification popup specifically */
+.no-mirror::before {
+  display: none !important;
 }
 
 @keyframes shine {

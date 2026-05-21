@@ -6,6 +6,7 @@ const Question = require('../models/Question');
 const WeeklyTask = require('../models/WeeklyTask');
 const User = require('../models/User');
 const Submission = require('../models/Submission');
+const ViolationReport = require('../models/ViolationReport');
 
 // =====================================
 // Admin Authentication & Management Routes
@@ -17,24 +18,36 @@ const Submission = require('../models/Submission');
  */
 // Admin Login
 router.post('/login', async (req, res) => {
-    let { email, password } = req.body;
-    if (email) email = email.trim().toLowerCase();
+    const { email, password, expectedRole } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ message: 'Email and password are required' });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
 
     try {
         const bcrypt = require('bcryptjs');
-        const admin = await Admin.findOne({ email });
-        
+        const admin = await Admin.findOne({ email: normalizedEmail });
+
         if (!admin) {
-            return res.status(400).json({ message: 'Invalid Credentials' });
+            return res.status(400).json({ message: 'Invalid credentials' });
         }
 
-        // Support both plaintext (for old seeded) and hashed passwords
+        if (expectedRole && admin.role !== expectedRole) {
+            return res.status(403).json({
+                message: `This account cannot sign in as ${expectedRole}. Use the correct portal for your role.`,
+            });
+        }
+
         let isMatch = false;
-        if (admin.password.startsWith('$2a$') || admin.password.startsWith('$2b$')) {
+        const isHashed = admin.password.startsWith('$2a$') || admin.password.startsWith('$2b$');
+
+        if (isHashed) {
             isMatch = await bcrypt.compare(password, admin.password);
         } else {
             isMatch = admin.password === password;
-            // Optionally auto-hash the password here for future logins
+
             if (isMatch) {
                 const salt = await bcrypt.genSalt(10);
                 admin.password = await bcrypt.hash(password, salt);
@@ -43,20 +56,38 @@ router.post('/login', async (req, res) => {
         }
 
         if (!isMatch) {
-            return res.status(400).json({ message: 'Invalid Credentials' });
+            return res.status(400).json({ message: 'Invalid credentials' });
         }
 
-        const payload = { admin: { id: admin.id, role: admin.role, assignedLab: admin.assignedLab } };
+        const payload = { 
+            admin: { 
+                id: admin.id, 
+                role: admin.role, 
+                assignedLab: admin.assignedLab 
+            } 
+        };
+
         jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' }, (err, token) => {
-            if (err) throw err;
+            if (err) {
+                console.error(` [JWT ERROR] ${err.message}`);
+                throw err;
+            }
             res.json({ 
                 token, 
                 role: admin.role,
-                admin: { id: admin.id, email: admin.email, role: admin.role, assignedLab: admin.assignedLab } 
+                admin: { 
+                    id: admin.id, 
+                    email: admin.email, 
+                    role: admin.role, 
+                    assignedLab: admin.assignedLab,
+                    name: admin.name,
+                    weeklyUnlockDay: admin.weeklyUnlockDay,
+                    weeklyUnlockTime: admin.weeklyUnlockTime,
+                } 
             });
         });
     } catch (err) {
-        console.error(err);
+        console.error(` [SERVER ERROR] ${err.message}`);
         res.status(500).send('Server error');
     }
 });
@@ -73,6 +104,32 @@ const authAdmin = (req, res, next) => {
         res.status(401).json({ message: 'Token is not valid' });
     }
 };
+
+// Lab admin: set recurring weekly unlock (scheduler uses weeklyUnlockDay + weeklyUnlockTime)
+router.put('/me/weekly-unlock', authAdmin, async (req, res) => {
+    try {
+        if (req.admin.role !== 'labadmin') {
+            return res.status(403).json({ message: 'Only lab admins can update weekly unlock schedule' });
+        }
+        const { weeklyUnlockDay, weeklyUnlockTime } = req.body;
+        if (!weeklyUnlockDay || !weeklyUnlockTime) {
+            return res.status(400).json({ message: 'weeklyUnlockDay and weeklyUnlockTime are required' });
+        }
+        const admin = await Admin.findById(req.admin.id);
+        if (!admin) return res.status(404).json({ message: 'Not found' });
+        admin.weeklyUnlockDay = String(weeklyUnlockDay).trim();
+        admin.weeklyUnlockTime = String(weeklyUnlockTime).trim();
+        await admin.save();
+        res.json({
+            weeklyUnlockDay: admin.weeklyUnlockDay,
+            weeklyUnlockTime: admin.weeklyUnlockTime,
+            assignedLab: admin.assignedLab,
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Server error');
+    }
+});
 
 // @route   GET api/admin/me
 // @desc    Get current admin data
@@ -236,7 +293,16 @@ router.get('/stats', authAdmin, async (req, res) => {
                 unlockAt: t.unlockDateTime || "According to Lab Schedule"
             })),
             facultySchedules,
-            latestSubmissions: submissions.slice(0, 10),
+            latestSubmissions: submissions.slice(0, 20).map(sub => {
+                // Find all submissions for this user & question
+                const userQuestionSubs = submissions.filter(s => s.user && s.question && s.user._id.toString() === sub.user._id.toString() && s.question._id.toString() === sub.question._id.toString());
+                const langs = [...new Set(userQuestionSubs.map(s => s.language))].filter(Boolean);
+                return {
+                    ...sub.toObject(),
+                    attempts: userQuestionSubs.length,
+                    languagesUsed: langs
+                };
+            }),
             yearWise: Object.keys(yearWise).map(k => ({ name: k, ...yearWise[k] })),
             sectionWise: Object.keys(sectionWise).map(k => ({ name: k, ...sectionWise[k] })),
             labWise: Object.keys(labWise).map(k => ({ name: k, ...labWise[k] }))
@@ -250,7 +316,7 @@ router.get('/stats', authAdmin, async (req, res) => {
 // Weekly Tasks Routes
 router.post('/tasks', authAdmin, async (req, res) => {
     try {
-        const { weekNumber, unlockDateTime, deadlineDateTime, labName, questions } = req.body;
+        const { weekNumber, unlockDateTime, deadlineDateTime, labName, questions, isFinalWeek } = req.body;
         
         // Find existing task for this week and lab or create new
         let task = await WeeklyTask.findOne({ weekNumber, labName: labName || req.admin.assignedLab });
@@ -259,6 +325,7 @@ router.post('/tasks', authAdmin, async (req, res) => {
             if (unlockDateTime) task.unlockDateTime = new Date(unlockDateTime);
             if (deadlineDateTime) task.deadlineDateTime = new Date(deadlineDateTime);
             if (questions) task.questions = questions;
+            if (typeof isFinalWeek === 'boolean') task.isFinalWeek = isFinalWeek;
             await task.save();
         } else {
             task = new WeeklyTask({ 
@@ -267,7 +334,8 @@ router.post('/tasks', authAdmin, async (req, res) => {
                 unlockDateTime: unlockDateTime ? new Date(unlockDateTime) : null,
                 deadlineDateTime: deadlineDateTime ? new Date(deadlineDateTime) : null,
                 questions,
-                isUnlocked: unlockDateTime ? new Date(unlockDateTime) <= new Date() : false
+                isUnlocked: unlockDateTime ? new Date(unlockDateTime) <= new Date() : false,
+                isFinalWeek: isFinalWeek || false
             });
             await task.save();
         }
@@ -317,7 +385,11 @@ router.post('/tasks', authAdmin, async (req, res) => {
 
 router.get('/tasks', authAdmin, async (req, res) => {
     try {
-        const tasks = await WeeklyTask.find().populate('questions');
+        const q = {};
+        if (req.admin.role === 'labadmin') {
+            q.labName = req.admin.assignedLab;
+        }
+        const tasks = await WeeklyTask.find(q).populate('questions');
         res.json(tasks);
     } catch (err) {
         res.status(500).send('Server error');
@@ -328,6 +400,9 @@ router.get('/tasks', authAdmin, async (req, res) => {
 router.post('/questions', authAdmin, async (req, res) => {
     try {
         const payload = req.body;
+        if (!payload.primaryLanguage) {
+            return res.status(400).json({ message: 'Primary language is required' });
+        }
         if (req.admin.role === 'labadmin') {
             payload.labName = req.admin.assignedLab;
         }
@@ -460,29 +535,36 @@ router.get('/students', authAdmin, async (req, res) => {
 router.post('/students', authAdmin, async (req, res) => {
     try {
         if (req.admin.role !== 'superadmin') return res.status(403).json({ message: 'Forbidden' });
-        const { name, regNo, password, classAndYear, subjectName, selectedLab, facultyName, section } = req.body;
-        
-        // Generate a random string as password if not provided, though the form should provide it
-        const finalPassword = password || 'Student@123';
-        
-        // We do not store hashed password for student currently since they login with regNo + dob.
-        // Wait, the new prompt says "Password must be encrypted" and "Login with RegNo and Password".
-        // Let's encrypt the password.
+        const { name, regNo, dob, password, classAndYear, subjectName, selectedLab, facultyName, section } = req.body;
+
+        if (!dob) {
+            return res.status(400).json({ message: 'Date of birth (DOB) is required for student login.' });
+        }
+
+        const regNormalized = String(regNo).trim().toUpperCase();
+        const dup = await User.findOne({ regNo: new RegExp(`^${regNormalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') });
+        if (dup) {
+            return res.status(400).json({ message: 'Registration number already exists.' });
+        }
+
         const bcrypt = require('bcryptjs');
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(finalPassword, salt);
-        
-        const newStudent = new User({
+        const payload = {
             name,
-            regNo: regNo.toUpperCase().trim(),
-            password: hashedPassword, // Note: We need to ensure User model supports password and auth uses it
+            regNo: regNormalized,
+            dob: String(dob).trim(),
             classAndYear,
             subjectName,
             selectedLab,
             facultyName,
-            section
-        });
-        
+            section,
+        };
+        if (password) {
+            const salt = await bcrypt.genSalt(10);
+            payload.password = await bcrypt.hash(password, salt);
+        }
+
+        const newStudent = new User(payload);
+
         await newStudent.save();
         res.json(newStudent);
     } catch (err) {
@@ -594,6 +676,86 @@ router.delete('/admins/:id', authAdmin, async (req, res) => {
     if (req.admin.role !== 'superadmin') return res.status(403).json({ message: 'Forbidden' });
     await Admin.findByIdAndDelete(req.params.id);
     res.json({ message: 'Deleted' });
+});
+
+// Violation reports (academic integrity / lab conduct)
+router.get('/violations', authAdmin, async (req, res) => {
+    try {
+        const q = {};
+        if (req.admin.role === 'labadmin' || req.admin.role === 'admin') {
+            q.labName = req.admin.assignedLab;
+        }
+        const list = await ViolationReport.find(q)
+            .populate('student', 'name regNo selectedLab section')
+            .populate('reportedBy', 'name email role')
+            .sort({ createdAt: -1 });
+        res.json(list);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Server error');
+    }
+});
+
+router.post('/violations', authAdmin, async (req, res) => {
+    try {
+        if (!['labadmin', 'admin', 'superadmin'].includes(req.admin.role)) {
+            return res.status(403).json({ message: 'Insufficient permission' });
+        }
+        const { studentId, title, details, severity, labName: bodyLab } = req.body;
+        if (!studentId || !title) {
+            return res.status(400).json({ message: 'studentId and title are required' });
+        }
+        let labName;
+        if (req.admin.role === 'superadmin') {
+            labName = bodyLab;
+        } else {
+            labName = req.admin.assignedLab;
+        }
+        if (!labName) {
+            return res.status(400).json({ message: 'Lab is not set for this account' });
+        }
+        const stu = await User.findById(studentId);
+        if (!stu) return res.status(404).json({ message: 'Student not found' });
+        if (stu.selectedLab !== labName) {
+            return res.status(400).json({ message: 'Student is not assigned to this lab' });
+        }
+        const v = new ViolationReport({
+            student: studentId,
+            labName,
+            title: String(title).trim(),
+            details: details ? String(details).trim() : '',
+            severity: ['low', 'medium', 'high'].includes(severity) ? severity : 'medium',
+            reportedBy: req.admin.id,
+        });
+        await v.save();
+        const populated = await ViolationReport.findById(v._id)
+            .populate('student', 'name regNo selectedLab')
+            .populate('reportedBy', 'name email role');
+        res.json(populated);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Server error');
+    }
+});
+
+router.patch('/violations/:id', authAdmin, async (req, res) => {
+    try {
+        const v = await ViolationReport.findById(req.params.id);
+        if (!v) return res.status(404).json({ message: 'Not found' });
+        if (req.admin.role === 'labadmin' || req.admin.role === 'admin') {
+            if (v.labName !== req.admin.assignedLab) {
+                return res.status(403).json({ message: 'Forbidden' });
+            }
+        }
+        if (req.body.status && ['open', 'investigating', 'resolved'].includes(req.body.status)) {
+            v.status = req.body.status;
+        }
+        await v.save();
+        res.json(v);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Server error');
+    }
 });
 
 module.exports = router;

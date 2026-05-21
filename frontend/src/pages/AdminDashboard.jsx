@@ -7,7 +7,14 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
 import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
 import PremiumHeader from '../components/PremiumHeader';
-import CalendarWidget from '../components/CalendarWidget';
+
+const formatIST = (dateString) => {
+    if (!dateString) return '—';
+    const d = new Date(dateString);
+    const datePart = d.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' }).replace(/\//g, '-');
+    const timePart = d.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true });
+    return `${datePart} ${timePart}`;
+};
 
 // ==========================================
 // Socket Connection Initialization
@@ -35,9 +42,9 @@ const AdminDashboard = () => {
     const [isEditing, setIsEditing] = useState(false);
     const [questionForm, setQuestionForm] = useState({
         title: '', description: '', inputFormat: '', outputFormat: '', 
-        constraints: '', sampleInput: '', sampleOutput: '', 
+        constraints: '', sampleInput: '', sampleOutput: '', hiddenInput: '', hiddenOutput: '',
         difficulty: 'Easy', weekNumber: '', tags: '', labName: '',
-        unlockDate: '', deadlineDate: ''
+        unlockDate: '', deadlineDate: '', primaryLanguage: '', isFinalWeek: false
     });
 
     const [facultyForm, setFacultyForm] = useState({ 
@@ -46,24 +53,41 @@ const AdminDashboard = () => {
         labDay: 'Thursday', startTime: '10:30', endTime: '12:30' 
     });
     const [studentForm, setStudentForm] = useState({
-        name: '', regNo: '', password: '', classAndYear: '', subjectName: '', selectedLab: '', facultyName: '', section: ''
+        name: '', regNo: '', dob: '', password: '', classAndYear: '', subjectName: '', selectedLab: '', facultyName: '', section: ''
     });
     const [adminForm, setAdminForm] = useState({ name: '', email: '', password: '', assignedLab: '', phone: '' });
+    const [toast, setToast] = useState(null);
 
     const LABS = ["C", "DS", "ADSAA", "OS", "CN", "OOPS through Java", "Python", "DBMS", "ML", "CNS", "FSAD", "AI", "Thinkering Lab"];
 
     useEffect(() => {
-        if (!user || (user.role !== 'superadmin' && user.role !== 'labadmin' && user.role !== 'admin')) {
+        if (!user) {
+            navigate('/login');
+            return;
+        }
+        if (user.role === 'labadmin') {
+            navigate('/lab-admin', { replace: true });
+            return;
+        }
+        if (user.role !== 'superadmin' && user.role !== 'admin') {
             navigate('/login');
             return;
         }
         fetchDashboardData();
+
+        const handleViolationAlert = (report) => {
+            if (user.role === 'superadmin' || (user.assignedLab && report.labName === user.assignedLab)) {
+                setToast(`🚨 Security Alert: ${report.student?.name} - ${report.title}`);
+                setTimeout(() => setToast(null), 5000);
+            }
+        };
 
         socket.on('submissionAdded', fetchDashboardData);
         socket.on('progressUpdated', fetchDashboardData);
         socket.on('questionAdded', fetchDashboardData);
         socket.on('questionDeleted', fetchDashboardData);
         socket.on('weekUnlocked', fetchDashboardData);
+        socket.on('violationAlert', handleViolationAlert);
 
         return () => {
             socket.off('submissionAdded', fetchDashboardData);
@@ -71,6 +95,7 @@ const AdminDashboard = () => {
             socket.off('questionAdded', fetchDashboardData);
             socket.off('questionDeleted', fetchDashboardData);
             socket.off('weekUnlocked', fetchDashboardData);
+            socket.off('violationAlert', handleViolationAlert);
         };
     }, [user, navigate]);
 
@@ -110,6 +135,11 @@ const AdminDashboard = () => {
 
     const handleQuestionSubmit = async (e) => {
         e.preventDefault();
+        if (!questionForm.primaryLanguage) {
+            alert('Please select primary language');
+            return;
+        }
+
         try {
             const token = localStorage.getItem('token');
             const payload = {
@@ -138,7 +168,7 @@ const AdminDashboard = () => {
                 title: '', description: '', inputFormat: '', outputFormat: '', constraints: '', 
                 sampleInput: '', sampleOutput: '', hiddenInput: '', hiddenOutput: '', 
                 difficulty: 'Easy', weekNumber: '', tags: '', labName: '',
-                unlockDate: '', deadlineDate: ''
+                unlockDate: '', deadlineDate: '', primaryLanguage: '', isFinalWeek: false
             });
             setIsEditing(false);
             fetchDashboardData();
@@ -174,7 +204,7 @@ const AdminDashboard = () => {
         try {
             const token = localStorage.getItem('token');
             await axios.post('http://localhost:5000/api/admin/students', studentForm, { headers: { 'x-auth-token': token } });
-            setStudentForm({ name: '', regNo: '', password: '', classAndYear: '', subjectName: '', selectedLab: '', facultyName: '', section: '' });
+            setStudentForm({ name: '', regNo: '', dob: '', password: '', classAndYear: '', subjectName: '', selectedLab: '', facultyName: '', section: '' });
             fetchDashboardData();
         } catch (err) {
             alert("Failed to add student: " + (err.response?.data?.message || err.message));
@@ -375,7 +405,7 @@ const AdminDashboard = () => {
                                 {stats.upcomingUnlocks?.length > 0 ? stats.upcomingUnlocks.map((u, i) => (
                                     <div key={i} style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', borderLeft: '4px solid #e7c965' }}>
                                         <div style={{ fontWeight: 'bold', color: '#ffffff' }}>Week {u.weekNumber} - {u.labName}</div>
-                                        <div style={{ fontSize: '0.85rem', color: '#d6d6d6' }}>Next Unlock: <span style={{ color: '#e7c965' }}>{u.unlockAt === "According to Lab Schedule" ? u.unlockAt : new Date(u.unlockAt).toLocaleString()}</span></div>
+                                        <div style={{ fontSize: '0.85rem', color: '#d6d6d6' }}>Next Unlock: <span style={{ color: '#e7c965' }}>{u.unlockAt === "According to Lab Schedule" ? u.unlockAt : formatIST(u.unlockAt)}</span></div>
                                     </div>
                                 )) : <p style={{ color: 'gray' }}>No pending unlocks scheduled.</p>}
                             </div>
@@ -410,7 +440,13 @@ const AdminDashboard = () => {
                                         <span style={{ fontWeight: 'bold', color: '#ffffff' }}>{sub.user?.name || 'Unknown'}</span>
                                         <span style={{ color: sub.status === 'Accepted' ? '#00ffb3' : '#ff5c5c', fontSize: '0.9rem', fontWeight: 'bold' }}>{sub.status}</span>
                                     </div>
-                                    <p style={{ color: '#d6d6d6', fontSize: '0.85rem' }}>{sub.question?.title}</p>
+                                    <div style={{ color: '#d6d6d6', fontSize: '0.85rem', marginBottom: '0.3rem' }}>
+                                        <strong>Question:</strong> {sub.question?.title}
+                                    </div>
+                                    <div style={{ color: '#d6d6d6', fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between' }}>
+                                        <span><strong>Attempts:</strong> {sub.attempts || 1}</span>
+                                        <span><strong>Languages:</strong> {sub.languagesUsed?.join(', ') || sub.language || 'N/A'}</span>
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -518,7 +554,16 @@ const AdminDashboard = () => {
                                 <select value={questionForm.difficulty} onChange={e => setQuestionForm({...questionForm, difficulty: e.target.value})} className="glass" style={{ padding: '10px' }}>
                                     <option value="Easy">Easy</option><option value="Medium">Medium</option><option value="Hard">Hard</option>
                                 </select>
+                                <select value={questionForm.primaryLanguage} onChange={e => setQuestionForm({...questionForm, primaryLanguage: e.target.value})} required className="glass" style={{ padding: '10px' }}>
+                                    <option value="" disabled>Select Primary Language</option>
+                                    <option value="C">C</option>
+                                    <option value="C++">C++</option>
+                                    <option value="Java">Java</option>
+                                    <option value="Python">Python</option>
+                                </select>
                                 <input placeholder="Week Number (e.g. 1)" type="number" value={questionForm.weekNumber} onChange={e => setQuestionForm({...questionForm, weekNumber: e.target.value})} required className="glass" style={{ padding: '10px' }} />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem' }}>
                                 <input placeholder="Tags (comma separated)" value={questionForm.tags} onChange={e => setQuestionForm({...questionForm, tags: e.target.value})} className="glass" style={{ padding: '10px' }} />
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
@@ -530,6 +575,13 @@ const AdminDashboard = () => {
                                     <label style={{ fontSize: '0.8rem', color: '#d6d6d6', marginBottom: '0.3rem', display: 'block' }}>Deadline Date & Time</label>
                                     <input type="datetime-local" value={questionForm.deadlineDate} onChange={e => setQuestionForm({...questionForm, deadlineDate: e.target.value})} className="glass" style={{ width: '100%', padding: '10px' }} />
                                 </div>
+                            </div>
+                            <div className="form-group" style={{ marginTop: '0.5rem' }}>
+                                <label style={{ fontSize: '0.8rem', color: '#d6d6d6', marginBottom: '0.3rem', display: 'block' }}>Is This Final Week?</label>
+                                <select value={questionForm.isFinalWeek ? 'true' : 'false'} onChange={e => setQuestionForm({...questionForm, isFinalWeek: e.target.value === 'true'})} className="glass" style={{ width: '100%', padding: '10px' }}>
+                                    <option value="false">No</option>
+                                    <option value="true">Yes</option>
+                                </select>
                             </div>
                             <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
                                 <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>{isEditing ? 'Update Question' : 'Publish & Schedule'}</button>
@@ -550,7 +602,7 @@ const AdminDashboard = () => {
                                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                                         <button onClick={() => {
                                             setIsEditing(true);
-                                            setQuestionForm({...q, sampleInput: q.sampleTestCases[0]?.input || '', sampleOutput: q.sampleTestCases[0]?.output || '', hiddenInput: q.hiddenTestCases[0]?.input || '', hiddenOutput: q.hiddenTestCases[0]?.output || '', tags: q.tags?.join(', ') || '', weekNumber: ''});
+                                            setQuestionForm({...q, sampleInput: q.sampleTestCases[0]?.input || '', sampleOutput: q.sampleTestCases[0]?.output || '', hiddenInput: q.hiddenTestCases[0]?.input || '', hiddenOutput: q.hiddenTestCases[0]?.output || '', tags: q.tags?.join(', ') || '', weekNumber: q.weekNumber || '', primaryLanguage: q.primaryLanguage || '', isFinalWeek: q.isFinalWeek || false});
                                         }} className="btn glass" style={{ color: 'var(--primary)', padding: '8px' }}><Edit size={16} /></button>
                                         <button onClick={() => handleDeleteQuestion(q._id)} className="btn glass" style={{ color: 'var(--error)', padding: '8px' }}><Trash size={16} /></button>
                                     </div>
@@ -576,8 +628,12 @@ const AdminDashboard = () => {
                                     <input placeholder="e.g. 24091A0514" value={studentForm.regNo} onChange={e => setStudentForm({...studentForm, regNo: e.target.value})} required className="glass" style={{ width: '100%', padding: '10px' }} />
                                 </div>
                                 <div className="form-group">
-                                    <label style={{ color: '#d6d6d6', marginBottom: '0.5rem', display: 'block' }}>Password</label>
-                                    <input type="password" placeholder="Set Password" value={studentForm.password} onChange={e => setStudentForm({...studentForm, password: e.target.value})} required className="glass" style={{ width: '100%', padding: '10px' }} />
+                                    <label style={{ color: '#d6d6d6', marginBottom: '0.5rem', display: 'block' }}>Date of birth (login)</label>
+                                    <input placeholder="DD/MM/YYYY" value={studentForm.dob} onChange={e => setStudentForm({...studentForm, dob: e.target.value})} required className="glass" style={{ width: '100%', padding: '10px' }} />
+                                </div>
+                                <div className="form-group">
+                                    <label style={{ color: '#d6d6d6', marginBottom: '0.5rem', display: 'block' }}>Password (optional)</label>
+                                    <input type="password" placeholder="Leave blank if using DOB only" value={studentForm.password} onChange={e => setStudentForm({...studentForm, password: e.target.value})} className="glass" style={{ width: '100%', padding: '10px' }} />
                                 </div>
                                 <div className="form-group">
                                     <label style={{ color: '#d6d6d6', marginBottom: '0.5rem', display: 'block' }}>Year</label>
@@ -815,6 +871,35 @@ const AdminDashboard = () => {
                     </div>
                 </div>
             )}
+            
+            <AnimatePresence>
+                {toast && (
+                    <motion.div
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 20 }}
+                        style={{ position: 'fixed', bottom: '2rem', right: '2rem', zIndex: 1000 }}
+                    >
+                        <div
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.6rem',
+                                background: 'linear-gradient(135deg, #7f1d1d, #991b1b)',
+                                color: '#fff',
+                                padding: '16px 24px',
+                                borderRadius: '12px',
+                                boxShadow: '0 10px 40px rgba(220, 38, 38, 0.4)',
+                                fontWeight: 600,
+                                fontSize: '1rem',
+                            }}
+                        >
+                            <AlertCircle size={24} />
+                            {toast}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 };

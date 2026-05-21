@@ -3,6 +3,8 @@ const socketIo = require('socket.io');
 
 require('dotenv').config();
 
+process.env.TZ = "Asia/Kolkata";
+
 process.on("uncaughtException", (err) => {
   console.error("UNCAUGHT EXCEPTION:", err);
 });
@@ -47,10 +49,12 @@ connectDB().then(async () => {
             });
 
             // Admin
-            await Admin.create({ 
-                email: 'syedamanmirzanulla@gmail.com', 
-                password: 'Syed@1907', 
-                role: 'admin' 
+            await Admin.create({
+                email: 'syedamanmirzanulla@gmail.com',
+                password: 'Syed@1907',
+                role: 'admin',
+                name: 'Faculty Admin',
+                assignedLab: 'DS',
             });
 
             // Lab Admins
@@ -86,6 +90,12 @@ app.use(express.json());
 // Socket.io connection
 io.on('connection', (socket) => {
     console.log('New client connected', socket.id);
+    
+    socket.on('securityViolation', (data) => {
+        // Broadcast to all connected admins
+        io.emit('adminSecurityAlert', data);
+    });
+
     socket.on('disconnect', () => {
         console.log('Client disconnected', socket.id);
     });
@@ -101,6 +111,8 @@ app.use('/api/questions', require('./routes/questions'));
 app.use('/api/execute', require('./routes/execute'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/schedule', require('./routes/schedule'));
+app.use('/api/security', require('./routes/security'));
+app.use('/api/lab', require('./routes/lab'));
 
 const PORT = process.env.PORT || 5000;
 

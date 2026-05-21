@@ -18,34 +18,46 @@ const seedData = async () => {
         await WeeklyTask.deleteMany();
         await ProgressTracking.deleteMany();
 
+        // Create Super Admins
         await Admin.create({
+            name: 'HOD CSE',
             email: 'hod@rgmcet.edu',
             password: 'HOD@1907',
             role: 'superadmin'
         });
         await Admin.create({
+            name: 'Syed Aman',
             email: 'syedamanmirzanulla@gmail.com',
             password: 'Syed@1907',
             role: 'superadmin'
         });
-        await Admin.create({
-            email: 'c.labadmin@rgm.edu',
-            password: 'Admin@123',
-            role: 'labadmin',
-            assignedLab: 'C'
-        });
-        await Admin.create({
-            email: 'java.labadmin@rgm.edu',
-            password: 'Admin@123',
-            role: 'labadmin',
-            assignedLab: 'OOPS through Java'
-        });
-        await Admin.create({
-            email: 'pythonadmin@platformhub.com',
-            password: 'Admin@123',
-            role: 'labadmin',
-            assignedLab: 'Python'
-        });
+
+        // Create Lab Admins
+        const labAdmins = [
+            { lab: 'C', email: 'c.labadmin@rgm.edu', password: 'C@123' },
+            { lab: 'DS', email: 'ds.labadmin@rgm.edu', password: 'DS@123' },
+            { lab: 'ADSAA', email: 'adsaa.labadmin@rgm.edu', password: 'ADSAA@123' },
+            { lab: 'OS', email: 'os.labadmin@rgm.edu', password: 'OS@123' },
+            { lab: 'CN', email: 'cn.labadmin@rgm.edu', password: 'CN@123' },
+            { lab: 'OOPS through Java', email: 'java.labadmin@rgm.edu', password: 'JAVA@123' },
+            { lab: 'Python', email: 'python.labadmin@rgm.edu', password: 'PYTHON@123' },
+            { lab: 'DBMS', email: 'dbms.labadmin@rgm.edu', password: 'DBMS@123' },
+            { lab: 'ML', email: 'ml.labadmin@rgm.edu', password: 'ML@123' },
+            { lab: 'CNS', email: 'cns.labadmin@rgm.edu', password: 'CNS@123' },
+            { lab: 'FSAD', email: 'fsad.labadmin@rgm.edu', password: 'FSAD@123' },
+            { lab: 'AI', email: 'ai.labadmin@rgm.edu', password: 'AI@123' },
+            { lab: 'Tinkering Lab', email: 'tinkering.labadmin@rgm.edu', password: 'TINKER@123' }
+        ];
+
+        for (const admin of labAdmins) {
+            await Admin.create({
+                name: `${admin.lab} Lab Admin`,
+                email: admin.email,
+                password: admin.password,
+                role: 'labadmin',
+                assignedLab: admin.lab
+            });
+        }
 
         // Add Mock Users
         await User.create({

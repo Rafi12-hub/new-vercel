@@ -7,8 +7,12 @@ const initScheduler = (socketIo) => {
     cron.schedule('* * * * *', async () => {
         try {
             const Admin = require('./models/Admin');
-            const now = new Date();
-            const currentDay = now.toLocaleString('en-US', { weekday: 'long' });
+            const now = new Date(
+                new Date().toLocaleString("en-US", {
+                    timeZone: "Asia/Kolkata"
+                })
+            );
+            const currentDay = now.toLocaleString('en-US', { weekday: 'long', timeZone: "Asia/Kolkata" });
             const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
             
             // 1. Check explicit unlockDateTime in WeeklyTask
@@ -39,8 +43,25 @@ const initScheduler = (socketIo) => {
                 }
             }
 
+            const labAdmins = await Admin.find({
+                role: 'labadmin',
+                weeklyUnlockDay: currentDay,
+                weeklyUnlockTime: { $nin: [null, ''] }
+            });
+
+            const tasksByLabAdminSchedule = [];
+            for (const la of labAdmins) {
+                if (!la.assignedLab || !la.weeklyUnlockTime) continue;
+                if (currentTime < la.weeklyUnlockTime) continue;
+                const task = await WeeklyTask.findOne({
+                    labName: la.assignedLab,
+                    isUnlocked: false
+                }).sort({ weekNumber: 1 });
+                if (task) tasksByLabAdminSchedule.push(task);
+            }
+
             // Combine and unique tasks
-            const allTasks = [...tasksByDate, ...tasksBySchedule];
+            const allTasks = [...tasksByDate, ...tasksBySchedule, ...tasksByLabAdminSchedule];
             const uniqueTaskIds = [...new Set(allTasks.map(t => t._id.toString()))];
             
             for (const id of uniqueTaskIds) {
@@ -65,6 +86,10 @@ const initScheduler = (socketIo) => {
                         labName: task.labName
                     });
                 }
+            }
+
+            if (socketIo) {
+                socketIo.emit('scheduleCheck'); // Pulse to let clients check if their current lab is open/closed
             }
         } catch (err) {
             console.error('[SCHEDULER ERROR]', err);

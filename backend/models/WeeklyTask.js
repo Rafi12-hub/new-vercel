@@ -9,6 +9,7 @@ const weeklyTaskSchema = new mongoose.Schema({
     unlockDateTime: { type: Date }, // Actual calculated date
     deadlineDateTime: { type: Date }, // For student dashboard alerts
     isUnlocked: { type: Boolean, default: false },
+    isFinalWeek: { type: Boolean, default: false },
     questions: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Question' }]
 });
 

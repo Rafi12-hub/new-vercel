@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, Bell, User as UserIcon, Code2, Check, User, Activity, Settings, Info } from 'lucide-react';
@@ -14,7 +14,7 @@ const socket = io('http://localhost:5000');
  * Premium Header Component
  * Provides luxury branding, real-time notifications, and user profile management.
  */
-const PremiumHeader = ({ title, subtitle }) => {
+const PremiumHeader = () => {
     // Context and routing
     const { user, logout } = useAuth();
     const navigate = useNavigate();
@@ -138,7 +138,15 @@ const PremiumHeader = ({ title, subtitle }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
                 <div style={{ textAlign: 'right', display: 'none', '@media (min-width: 768px)': { display: 'block' } }}>
                     <p style={{ margin: 0, fontWeight: 'bold', color: 'var(--text)' }}>{user?.name || user?.email}</p>
-                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'gray' }}>{user?.role === 'superadmin' ? 'Super Admin (HOD)' : user?.role === 'labadmin' ? 'Lab Admin' : 'Student'}</p>
+                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'gray' }}>
+                        {user?.role === 'superadmin'
+                            ? 'Super Admin (HOD)'
+                            : user?.role === 'labadmin'
+                              ? 'Lab Admin'
+                              : user?.role === 'admin'
+                                ? 'Faculty / Admin'
+                                : 'Student'}
+                    </p>
                 </div>
                 
                 <div style={{ display: 'flex', gap: '1rem', position: 'relative' }}>

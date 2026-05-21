@@ -1,78 +1,374 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { motion } from 'framer-motion';
 import PremiumHeader from '../components/PremiumHeader';
-import { User, Mail, Hash, BookOpen, Layers, Activity } from 'lucide-react';
+import axios from 'axios';
+import { User, Settings, Lock, Eye, Bell, Shield, LogOut, Code, ChevronRight, Activity, Award, Star } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { io } from 'socket.io-client';
+
+const socket = io('http://localhost:5000');
+
+const SETTINGS_TABS = [
+    { id: 'profile', label: 'My Profile', icon: User },
+    { id: 'account', label: 'Account Settings', icon: Settings },
+    { id: 'password', label: 'Change Password', icon: Lock },
+    { id: 'appearance', label: 'Appearance', icon: Eye },
+    { id: 'notifications', label: 'Notifications', icon: Bell },
+    { id: 'privacy', label: 'Privacy & Security', icon: Shield },
+];
 
 const MyProfile = () => {
-    const { user } = useAuth();
+    const { user, logout } = useAuth();
+    const navigate = useNavigate();
+    const [activeTab, setActiveTab] = useState('profile');
+    const [stats, setStats] = useState({
+        easy: 0, medium: 0, hard: 0, totalSolved: 0,
+        totalSubmissions: 0, acceptedSubmissions: 0, successPercentage: 0,
+        rank: 'Novice', points: 0, weeklyProgress: '80%', monthlyProgress: '65%'
+    });
+
+    const fetchStats = async () => {
+        try {
+            const token = localStorage.getItem('token');
+            const res = await axios.get('http://localhost:5000/api/auth/me', {
+                headers: { 'x-auth-token': token }
+            });
+            const userData = res.data;
+            const submissions = userData.submissions || [];
+            
+            const accepted = submissions.filter(s => s.status === 'Accepted');
+            const totalSubmissions = submissions.length;
+            const acceptedSubmissions = accepted.length;
+            const successPercentage = totalSubmissions > 0 ? Math.round((acceptedSubmissions / totalSubmissions) * 100) : 0;
+            
+            // Track unique solved by difficulty
+            const solvedSet = new Map();
+            accepted.forEach(s => {
+                const qId = s.question?._id || s.question;
+                const diff = s.question?.difficulty || 'Medium';
+                if (!solvedSet.has(qId)) {
+                    solvedSet.set(String(qId), diff);
+                }
+            });
+            
+            let easy = 0, medium = 0, hard = 0;
+            solvedSet.forEach(diff => {
+                if (diff === 'Easy') easy++;
+                else if (diff === 'Hard') hard++;
+                else medium++;
+            });
+            
+            const totalSolved = solvedSet.size;
+            const points = (easy * 10) + (medium * 20) + (hard * 30);
+            
+            let rank = 'Novice';
+            if (points > 100) rank = 'Beginner';
+            if (points > 500) rank = 'Intermediate';
+            if (points > 1000) rank = 'Advanced';
+            if (points > 2000) rank = 'Expert';
+
+            // Fetch questions to calculate weekly/monthly progress
+            const labQuery = userData?.selectedLab ? `?labName=${encodeURIComponent(userData.selectedLab)}` : '';
+            const questionsRes = await axios.get(`http://localhost:5000/api/questions${labQuery}`);
+            const questions = questionsRes.data || [];
+
+            // Group questions by week to find current week and current month
+            const grouped = questions.reduce((acc, q) => {
+                if (q.weeklyTask) {
+                    const weekId = q.weeklyTask._id;
+                    if (!acc[weekId]) acc[weekId] = { ...q.weeklyTask, questions: [] };
+                    acc[weekId].questions.push(q);
+                }
+                return acc;
+            }, {});
+            const weeks = Object.values(grouped).sort((a, b) => a.weekNumber - b.weekNumber);
+            const unlockedWeeks = weeks.filter(w => w.isUnlocked);
+            
+            let weeklyProgress = '0%';
+            let monthlyProgress = '0%';
+
+            if (unlockedWeeks.length > 0) {
+                // Current week is the highest unlocked week
+                const currentWeek = unlockedWeeks[unlockedWeeks.length - 1];
+                const currentWeekQs = currentWeek.questions;
+                const currentWeekTotal = currentWeekQs.length;
+                const currentWeekSolved = currentWeekQs.filter(q => solvedSet.has(String(q._id))).length;
+                weeklyProgress = currentWeekTotal > 0 ? `${Math.round((currentWeekSolved / currentWeekTotal) * 100)}%` : '0%';
+
+                // Current month: assume a month is a block of 4 weeks ending with the current week (e.g. week 1-4, 5-8)
+                const currentMonthIndex = Math.floor((currentWeek.weekNumber - 1) / 4);
+                const currentMonthWeeks = unlockedWeeks.filter(w => Math.floor((w.weekNumber - 1) / 4) === currentMonthIndex);
+                
+                let monthTotalQs = 0;
+                let monthSolvedQs = 0;
+                currentMonthWeeks.forEach(w => {
+                    monthTotalQs += w.questions.length;
+                    monthSolvedQs += w.questions.filter(q => solvedSet.has(String(q._id))).length;
+                });
+                monthlyProgress = monthTotalQs > 0 ? `${Math.round((monthSolvedQs / monthTotalQs) * 100)}%` : '0%';
+            }
+
+            setStats({
+                easy, medium, hard, totalSolved, totalSubmissions, acceptedSubmissions, successPercentage,
+                rank, points, weeklyProgress, monthlyProgress
+            });
+
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    useEffect(() => {
+        const t = window.setTimeout(() => fetchStats(), 0);
+
+        const onSubmissionAdded = (populated) => {
+            const subUser = populated?.user?._id || populated?.user;
+            if (user && subUser && String(subUser) !== String(user._id)) return;
+            fetchStats();
+        };
+
+        socket.on('submissionAdded', onSubmissionAdded);
+        socket.on('progressUpdated', fetchStats);
+        socket.on('questionAdded', fetchStats);
+        socket.on('weekUnlocked', fetchStats);
+
+        return () => {
+            window.clearTimeout(t);
+            socket.off('submissionAdded', onSubmissionAdded);
+            socket.off('progressUpdated', fetchStats);
+            socket.off('questionAdded', fetchStats);
+            socket.off('weekUnlocked', fetchStats);
+        };
+    }, [user]);
+
+    const handleLogout = () => {
+        logout();
+        navigate('/login');
+    };
 
     return (
-        <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
+        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
             <PremiumHeader />
-            
-            <motion.div 
-                initial={{ opacity: 0, y: 20 }} 
-                animate={{ opacity: 1, y: 0 }} 
-                className="card" 
-                style={{ padding: '3rem', maxWidth: '800px', margin: '0 auto' }}
-            >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '2rem', marginBottom: '3rem', borderBottom: '1px solid var(--border)', paddingBottom: '2rem' }}>
-                    <div style={{ width: '100px', height: '100px', borderRadius: '50%', background: 'var(--gradient-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem', color: 'white', fontWeight: 'bold' }}>
-                        {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
-                    </div>
-                    <div>
-                        <h1 style={{ fontSize: '2.5rem', margin: 0, marginBottom: '0.5rem' }}>{user?.name || 'Student Name'}</h1>
-                        <p style={{ color: 'var(--text-highlight)', margin: 0, fontSize: '1.2rem', fontWeight: 'bold' }}>
-                            {user?.regNo || 'Registration Number'}
-                        </p>
-                    </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '1rem' }}>
-                        <Mail color="var(--primary)" />
-                        <div>
-                            <p style={{ color: 'var(--text-muted-dark)', margin: 0, fontSize: '0.8rem' }}>Email</p>
-                            <p style={{ margin: 0, fontWeight: 'bold' }}>{user?.email || 'N/A'}</p>
-                        </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '1rem' }}>
-                        <BookOpen color="var(--primary)" />
-                        <div>
-                            <p style={{ color: 'var(--text-muted-dark)', margin: 0, fontSize: '0.8rem' }}>Assigned Lab</p>
-                            <p style={{ margin: 0, fontWeight: 'bold' }}>{user?.selectedLab || 'Not Assigned'}</p>
-                        </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '1rem' }}>
-                        <Hash color="var(--primary)" />
-                        <div>
-                            <p style={{ color: 'var(--text-muted-dark)', margin: 0, fontSize: '0.8rem' }}>Class & Year</p>
-                            <p style={{ margin: 0, fontWeight: 'bold' }}>{user?.classAndYear || 'N/A'}</p>
-                        </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '1rem' }}>
-                        <Layers color="var(--primary)" />
-                        <div>
-                            <p style={{ color: 'var(--text-muted-dark)', margin: 0, fontSize: '0.8rem' }}>Section</p>
-                            <p style={{ margin: 0, fontWeight: 'bold' }}>{user?.section || 'N/A'}</p>
-                        </div>
-                    </div>
-
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: '1rem', gridColumn: '1 / -1' }}>
-                        <Activity color="var(--primary)" />
-                        <div style={{ width: '100%' }}>
-                            <p style={{ color: 'var(--text-muted-dark)', margin: 0, fontSize: '0.8rem', marginBottom: '0.5rem' }}>Weekly Progress</p>
-                            <div style={{ height: '8px', background: 'var(--surface)', borderRadius: '4px', overflow: 'hidden' }}>
-                                <div style={{ height: '100%', width: `${Math.min(100, (user?.completedTasks?.length || 0) * 10)}%`, background: 'var(--gradient-primary)' }}></div>
+            <div style={{ display: 'flex', flex: 1, maxWidth: '1400px', margin: '0 auto', width: '100%', padding: '2rem', gap: '2rem' }}>
+                
+                {/* Sidebar (LeetCode Style Settings) */}
+                <motion.div 
+                    initial={{ x: -20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    className="card"
+                    style={{ width: '280px', padding: '1rem 0', alignSelf: 'flex-start', background: 'var(--surface)' }}
+                >
+                    <div style={{ padding: '0 1.5rem 1rem', borderBottom: '1px solid var(--border)', marginBottom: '1rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem', color: '#fff', fontWeight: 'bold' }}>
+                                {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                            </div>
+                            <div style={{ overflow: 'hidden' }}>
+                                <div style={{ fontWeight: 'bold', fontSize: '1.1rem', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', color: 'var(--text-heading-dark)' }}>{user?.name}</div>
+                                <div style={{ fontSize: '0.85rem', color: 'var(--text-muted-dark)' }}>{user?.regNo}</div>
                             </div>
                         </div>
                     </div>
-                </div>
-            </motion.div>
+                    
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                        {SETTINGS_TABS.map(tab => {
+                            const active = activeTab === tab.id;
+                            const Icon = tab.icon;
+                            return (
+                                <li key={tab.id} style={{ marginBottom: '0.25rem' }}>
+                                    <button
+                                        onClick={() => setActiveTab(tab.id)}
+                                        style={{
+                                            width: '100%',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            background: active ? 'rgba(130, 84, 238, 0.15)' : 'transparent',
+                                            border: 'none',
+                                            padding: '1rem 1.5rem',
+                                            color: active ? 'var(--primary-hover)' : 'var(--text)',
+                                            borderLeft: active ? '4px solid var(--primary)' : '4px solid transparent',
+                                            cursor: 'pointer',
+                                            textAlign: 'left',
+                                            fontSize: '0.95rem',
+                                            fontWeight: active ? '600' : '400',
+                                            transition: 'all 0.2s ease'
+                                        }}
+                                        onMouseOver={(e) => { if(!active) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
+                                        onMouseOut={(e) => { if(!active) e.currentTarget.style.background = 'transparent' }}
+                                    >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                            <Icon size={18} />
+                                            {tab.label}
+                                        </div>
+                                        {active && <ChevronRight size={16} />}
+                                    </button>
+                                </li>
+                            );
+                        })}
+                        <li style={{ marginTop: '1rem', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
+                            <button
+                                onClick={handleLogout}
+                                style={{
+                                    width: '100%',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.75rem',
+                                    background: 'transparent',
+                                    border: 'none',
+                                    padding: '1rem 1.5rem',
+                                    color: '#ef4444',
+                                    cursor: 'pointer',
+                                    textAlign: 'left',
+                                    fontSize: '0.95rem',
+                                    fontWeight: '500',
+                                    transition: 'all 0.2s ease'
+                                }}
+                                onMouseOver={(e) => e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'}
+                                onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}
+                            >
+                                <LogOut size={18} />
+                                Logout
+                            </button>
+                        </li>
+                    </ul>
+                </motion.div>
+
+                {/* Main Content Area */}
+                <motion.div 
+                    initial={{ y: 20, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                    style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1.5rem' }}
+                >
+                    {activeTab === 'profile' && (
+                        <>
+                            <div className="card" style={{ padding: '2rem' }}>
+                                <h2 style={{ margin: '0 0 1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem', color: 'var(--text-heading-dark)' }}>My Profile</h2>
+                                
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                        <div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted-dark)', marginBottom: '0.25rem' }}>Full Name</div>
+                                            <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{user?.name || 'N/A'}</div>
+                                        </div>
+                                        <div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted-dark)', marginBottom: '0.25rem' }}>Email Address</div>
+                                            <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{user?.email || 'N/A'}</div>
+                                        </div>
+                                        <div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted-dark)', marginBottom: '0.25rem' }}>Registration Number</div>
+                                            <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{user?.regNo || 'N/A'}</div>
+                                        </div>
+                                        <div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted-dark)', marginBottom: '0.25rem' }}>Branch & Year</div>
+                                            <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{user?.classAndYear || 'N/A'}</div>
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                        <div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted-dark)', marginBottom: '0.25rem' }}>Section</div>
+                                            <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{user?.section || 'N/A'}</div>
+                                        </div>
+                                        <div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted-dark)', marginBottom: '0.25rem' }}>Assigned Labs</div>
+                                            <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{user?.selectedLab || 'N/A'}</div>
+                                        </div>
+                                        <div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted-dark)', marginBottom: '0.25rem' }}>Weekly Progress</div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                <div style={{ flex: 1, height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                                                    <div style={{ width: stats.weeklyProgress, height: '100%', background: 'var(--primary)' }}></div>
+                                                </div>
+                                                <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: 'var(--primary)' }}>{stats.weeklyProgress}</span>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted-dark)', marginBottom: '0.25rem' }}>Monthly Progress</div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                                <div style={{ flex: 1, height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                                                    <div style={{ width: stats.monthlyProgress, height: '100%', background: '#e7c965' }}></div>
+                                                </div>
+                                                <span style={{ fontWeight: 'bold', fontSize: '0.9rem', color: '#e7c965' }}>{stats.monthlyProgress}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.5rem' }}>
+                                <div className="card" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                                    <Star size={40} color="#e7c965" style={{ marginBottom: '1rem' }} />
+                                    <div style={{ fontSize: '1rem', color: 'var(--text-muted-dark)' }}>Rank & Points</div>
+                                    <div style={{ fontSize: '1.8rem', fontWeight: 'bold', color: 'var(--text-heading-dark)' }}>{stats.rank}</div>
+                                    <div style={{ color: '#e7c965', fontWeight: 'bold', marginTop: '0.5rem' }}>{stats.points} XP</div>
+                                </div>
+
+                                <div className="card" style={{ padding: '2rem' }}>
+                                    <h3 style={{ margin: '0 0 1.5rem', color: 'var(--text-heading-dark)' }}>Submission Statistics</h3>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
+                                        <span style={{ color: 'var(--text-muted-dark)' }}>Total Submissions</span>
+                                        <span style={{ fontWeight: 'bold' }}>{stats.totalSubmissions}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
+                                        <span style={{ color: 'var(--text-muted-dark)' }}>Accepted Submissions</span>
+                                        <span style={{ fontWeight: 'bold', color: '#10b981' }}>{stats.acceptedSubmissions}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem', borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem' }}>
+                                        <span style={{ color: 'var(--text-muted-dark)' }}>Success Percentage</span>
+                                        <span style={{ fontWeight: 'bold', color: 'var(--primary)' }}>{stats.successPercentage}%</span>
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                        <span style={{ color: 'var(--text-muted-dark)' }}>Total Solved</span>
+                                        <span style={{ fontWeight: 'bold', fontSize: '1.2rem' }}>{stats.totalSolved}</span>
+                                    </div>
+                                </div>
+                                
+                                <div className="card" style={{ padding: '2rem' }}>
+                                    <h3 style={{ margin: '0 0 1.5rem', color: 'var(--text-heading-dark)' }}>Solved by Difficulty</h3>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                                        <div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                                <span style={{ color: '#10b981', fontWeight: 'bold' }}>Easy</span>
+                                                <span>{stats.easy}</span>
+                                            </div>
+                                            <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                <div style={{ width: `${Math.min(100, stats.easy * 5)}%`, height: '100%', background: '#10b981' }}></div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                                <span style={{ color: '#e7c965', fontWeight: 'bold' }}>Medium</span>
+                                                <span>{stats.medium}</span>
+                                            </div>
+                                            <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                <div style={{ width: `${Math.min(100, stats.medium * 5)}%`, height: '100%', background: '#e7c965' }}></div>
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                                                <span style={{ color: '#ef4444', fontWeight: 'bold' }}>Hard</span>
+                                                <span>{stats.hard}</span>
+                                            </div>
+                                            <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+                                                <div style={{ width: `${Math.min(100, stats.hard * 5)}%`, height: '100%', background: '#ef4444' }}></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    {activeTab !== 'profile' && (
+                        <div className="card" style={{ padding: '4rem 2rem', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                            <Settings size={64} color="var(--primary)" style={{ opacity: 0.5, marginBottom: '1.5rem' }} />
+                            <h2 style={{ marginBottom: '1rem', color: 'var(--text-heading-dark)' }}>{SETTINGS_TABS.find(t => t.id === activeTab)?.label}</h2>
+                            <p style={{ color: 'var(--text-muted-dark)', maxWidth: '400px' }}>This section is currently under development. Settings for {SETTINGS_TABS.find(t => t.id === activeTab)?.label.toLowerCase()} will be available in a future update.</p>
+                        </div>
+                    )}
+                </motion.div>
+            </div>
         </div>
     );
 };

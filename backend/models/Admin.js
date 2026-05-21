@@ -12,6 +12,9 @@ const adminSchema = new mongoose.Schema({
     labDay: { type: String },
     startTime: { type: String },
     endTime: { type: String },
+    /** Lab admin: recurring weekly auto-unlock for next locked week in assignedLab */
+    weeklyUnlockDay: { type: String },
+    weeklyUnlockTime: { type: String },
     totalQuestionsAdded: { type: Number, default: 0 },
     totalStudentsCompleted: { type: Number, default: 0 }
 });

@@ -5,13 +5,15 @@ import PremiumHeader from '../components/PremiumHeader';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 import { Target, CheckCircle, Clock, Activity } from 'lucide-react';
 import axios from 'axios';
+import { io } from 'socket.io-client';
+
+const socket = io('http://localhost:5000');
 
 const MyProgress = () => {
     const { user } = useAuth();
     const [stats, setStats] = useState({ solved: 0, pending: 0, accuracy: 0, submissionsData: [] });
 
-    useEffect(() => {
-        const fetchProgress = async () => {
+    const fetchProgress = async () => {
             try {
                 const token = localStorage.getItem('token');
                 const res = await axios.get('http://localhost:5000/api/auth/me', {
@@ -25,21 +27,61 @@ const MyProgress = () => {
                 const pending = totalAttempted > uniqueSolved ? totalAttempted - uniqueSolved : 0;
                 const accuracy = submissions.length > 0 ? Math.round((accepted.length / submissions.length) * 100) : 0;
 
-                // Mock weekly data for visual aesthetics
-                const submissionsData = [
-                    { name: 'Week 1', solved: 2 },
-                    { name: 'Week 2', solved: 3 },
-                    { name: 'Week 3', solved: uniqueSolved > 5 ? uniqueSolved - 5 : 0 },
-                    { name: 'Week 4', solved: uniqueSolved > 8 ? 2 : 0 }
-                ];
+                
+                const labQuery = res.data?.selectedLab ? `?labName=${encodeURIComponent(res.data.selectedLab)}` : '';
+                const questionsRes = await axios.get(`http://localhost:5000/api/questions${labQuery}`);
+                const questions = questionsRes.data || [];
+
+                const grouped = questions.reduce((acc, q) => {
+                    if (q.weeklyTask) {
+                        const weekId = q.weeklyTask._id;
+                        if (!acc[weekId]) acc[weekId] = { ...q.weeklyTask, questions: [] };
+                        acc[weekId].questions.push(q);
+                    }
+                    return acc;
+                }, {});
+                const weeks = Object.values(grouped).sort((a, b) => a.weekNumber - b.weekNumber);
+                const unlockedWeeks = weeks.filter(w => w.isUnlocked);
+
+                const submissionsData = unlockedWeeks.map(w => {
+                    const solved = w.questions.filter(q => {
+                        const qIdStr = String(q._id);
+                        return accepted.some(s => {
+                            const subQId = s.question?._id || s.question;
+                            return String(subQId) === qIdStr;
+                        });
+                    }).length;
+                    return { name: `Week ${w.weekNumber}`, solved };
+                });
 
                 setStats({ solved: uniqueSolved, pending, accuracy, submissionsData });
             } catch (err) {
                 console.error(err);
             }
         };
-        fetchProgress();
-    }, []);
+
+    useEffect(() => {
+        const t = window.setTimeout(() => fetchProgress(), 0);
+
+        const onSubmissionAdded = (populated) => {
+            const subUser = populated?.user?._id || populated?.user;
+            if (user && subUser && String(subUser) !== String(user._id)) return;
+            fetchProgress();
+        };
+
+        socket.on('submissionAdded', onSubmissionAdded);
+        socket.on('progressUpdated', fetchProgress);
+        socket.on('questionAdded', fetchProgress);
+        socket.on('weekUnlocked', fetchProgress);
+
+        return () => {
+            window.clearTimeout(t);
+            socket.off('submissionAdded', onSubmissionAdded);
+            socket.off('progressUpdated', fetchProgress);
+            socket.off('questionAdded', fetchProgress);
+            socket.off('weekUnlocked', fetchProgress);
+        };
+    }, [user]);
 
     const pieData = [
         { name: 'Solved', value: stats.solved || 1 },
