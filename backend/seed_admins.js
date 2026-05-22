@@ -9,7 +9,7 @@ const seedAdmins = async () => {
 
         const admins = [
             { email: 'clabadmin@platformhub.com', password: 'C@123', role: 'labadmin', assignedLab: 'C' },
-            { email: 'pythonadmin@platformhub.com', password: 'Python@123', role: 'labadmin', assignedLab: 'Python' },
+            { email: 'pythonadmin@platformhub.com', password: 'Python@123', role: 'labadmin', assignedLab: 'PYTHON' },
             { email: 'dbmsadmin@platformhub.com', password: 'DBMS@123', role: 'labadmin', assignedLab: 'DBMS' }
         ];
 

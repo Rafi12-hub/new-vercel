@@ -166,6 +166,33 @@ npm install
 
 ---
 
+## 🚦 Complete Workflow
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/your-username/rgmcet-compiler.git
+   cd rgmcet-compiler
+   ```
+2. **Install dependencies** (frontend & backend) as described in the Installation section.
+3. **Configure environment variables** in `backend/.env` (see the Environment Variables section).
+4. **Start the backend**:
+   ```bash
+   cd backend
+   npm start
+   ```
+5. **Start the frontend** (in a new terminal):
+   ```bash
+   cd frontend
+   npm run dev
+   ```
+6. Open the application in your browser at `http://localhost:5173` (or the URL displayed by the frontend).
+7. **Register / log in** as a Student, Faculty, Lab Admin, or Super Admin.
+8. **Create labs, assign questions, and monitor progress** via the respective dashboards.
+9. **Submit code** using the integrated online compiler and view real‑time results and analytics.
+10. **Generate reports** and view analytics from the Admin panel.
+
+---
+
 ## ▶️ Run Project
 
 **Start Frontend**

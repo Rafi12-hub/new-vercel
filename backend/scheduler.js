@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const WeeklyTask = require('./models/WeeklyTask');
-// const io = require('./server').io; // Removed as socketIo is passed to initScheduler
+const User = require('./models/User');
+const Notification = require('./models/Notification');
 
 // Run every minute to check for unlock schedules
 const initScheduler = (socketIo) => {
@@ -73,6 +74,26 @@ const initScheduler = (socketIo) => {
                 
                 console.log(`[SCHEDULER] Auto-Unlocked Week ${task.weekNumber} for ${task.labName}`);
                 
+                // Find all students matching task.labName
+                const students = await User.find({ selectedLab: task.labName });
+                
+                for (const student of students) {
+                    const newNotification = new Notification({
+                        userId: student._id,
+                        text: `Week ${task.weekNumber} is now unlocked for ${task.labName}`,
+                        type: 'task',
+                        unread: true
+                    });
+                    await newNotification.save();
+
+                    if (socketIo) {
+                        socketIo.emit('newNotification', {
+                            userId: student._id,
+                            notification: newNotification
+                        });
+                    }
+                }
+
                 if (socketIo) {
                     const update = {
                         labName: task.labName,
@@ -80,11 +101,40 @@ const initScheduler = (socketIo) => {
                         message: `Week ${task.weekNumber} for ${task.labName} is now unlocked!`
                     };
                     socketIo.emit('weekUnlocked', update);
-                    socketIo.emit('notification', {
-                        text: update.message,
-                        type: 'task',
-                        labName: task.labName
-                    });
+                }
+            }
+
+            // 3. Check deadlineDateTime for lab lock notifications
+            const tasksByDeadline = await WeeklyTask.find({
+                deadlineDateTime: { $lte: now }
+            });
+
+            for (const task of tasksByDeadline) {
+                const checkNotified = await Notification.findOne({
+                    text: `Lab Locked: Week ${task.weekNumber} is now locked for submissions!`,
+                    type: 'danger'
+                });
+
+                if (!checkNotified) {
+                    console.log(`[SCHEDULER] Auto-Locked Week ${task.weekNumber} for ${task.labName}`);
+                    
+                    const students = await User.find({ selectedLab: task.labName });
+                    for (const student of students) {
+                        const newNotification = new Notification({
+                            userId: student._id,
+                            text: `Lab Locked: Week ${task.weekNumber} is now locked for submissions!`,
+                            type: 'danger',
+                            unread: true
+                        });
+                        await newNotification.save();
+
+                        if (socketIo) {
+                            socketIo.emit('newNotification', {
+                                userId: student._id,
+                                notification: newNotification
+                            });
+                        }
+                    }
                 }
             }
 

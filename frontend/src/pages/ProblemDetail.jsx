@@ -14,6 +14,7 @@ const LANG_OPTIONS = [
     { id: 'java', label: 'Java' },
     { id: 'cpp', label: 'C++' },
     { id: 'c', label: 'C' },
+    { id: 'sql', label: 'SQL' },
 ];
 
 function getBoilerplate(lang) {
@@ -28,6 +29,8 @@ function getBoilerplate(lang) {
             return '#include <iostream>\nusing namespace std;\n\nint main() {\n    // Read input and write your logic here\n    \n    return 0;\n}';
         case 'c':
             return '#include <stdio.h>\n\nint main() {\n    // Read input and write your logic here\n    \n    return 0;\n}';
+        case 'sql':
+            return '-- Write your SQL query here\nSELECT 1;';
         default:
             return '';
     }
@@ -38,6 +41,15 @@ function monacoLanguage(lang) {
     if (lang === 'c') return 'c';
     return lang;
 }
+
+const confettiPieces = Array.from({ length: 34 }, (_, i) => ({
+    id: i,
+    left: `${8 + ((i * 13) % 86)}%`,
+    delay: `${(i % 9) * 0.08}s`,
+    duration: `${1.7 + (i % 5) * 0.18}s`,
+    color: ['#8254ee', '#e7c965', '#ffffff', '#34d399'][i % 4],
+    size: 6 + (i % 4) * 2,
+}));
 
 /** Block common copy/paste, context menu, devtools, and select-all shortcuts */
 function isBlockedShortcut(e) {
@@ -69,8 +81,10 @@ const ProblemDetail = () => {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
     const [toast, setToast] = useState(null);
+    const [pointsToast, setPointsToast] = useState(null);
     const [compilerLocked, setCompilerLocked] = useState(false);
     const [labOpenStatus, setLabOpenStatus] = useState(true);
+    const solveStartedAtRef = useRef(new Date().toISOString());
 
     const languageIsAccepted = problem?.acceptedLanguages?.includes(language);
     const compilerEnabled = !compilerLocked && !languageIsAccepted && labOpenStatus;
@@ -109,6 +123,7 @@ const ProblemDetail = () => {
                 }
                 setLanguage(initialLang);
                 setCode(getBoilerplate(initialLang));
+                solveStartedAtRef.current = new Date().toISOString();
             } catch {
                 setError('Problem not found');
             }
@@ -211,7 +226,7 @@ const ProblemDetail = () => {
             const uid = user?._id || user?.id;
             const res = await axios.post(
                 'http://localhost:5000/api/execute/submit',
-                { code, language, questionId: id, userId: uid },
+                { code, language, questionId: id, userId: uid, solveStartedAt: solveStartedAtRef.current },
                 { headers: { 'x-auth-token': token } }
             );
             setSubmitSummary(res.data);
@@ -226,6 +241,16 @@ const ProblemDetail = () => {
                     }
                     return prev;
                 });
+                setPointsToast({
+                    earnedPoints: res.data.earnedPoints || 0,
+                    basePoints: res.data.basePoints || 0,
+                    speedBonus: res.data.speedBonus ?? res.data.timeBonus ?? 0,
+                    accuracyBonus: res.data.accuracyBonus || 0,
+                    totalUserPoints: res.data.totalUserPoints || 0,
+                    rank: res.data.rank || 0,
+                });
+                setCode('');
+                window.setTimeout(() => setPointsToast(null), 4200);
             }
         } catch (err) {
             const msg = err.response?.data?.message || 'Submit failed';
@@ -316,7 +341,9 @@ const ProblemDetail = () => {
                         onChange={(e) => {
                             const v = e.target.value;
                             setLanguage(v);
-                            setCode(getBoilerplate(v));
+                            const completed = problem?.acceptedLanguages?.includes(v);
+                            setCode(completed ? '' : getBoilerplate(v));
+                            solveStartedAtRef.current = new Date().toISOString();
                         }}
                         className="glass"
                         disabled={compilerLocked}
@@ -453,8 +480,7 @@ const ProblemDetail = () => {
                                 <h2 style={{ margin: 0, color: '#34d399', fontSize: '1.5rem' }}>Language Completed</h2>
                                 <p style={{ margin: 0, maxWidth: '420px', lineHeight: 1.6, color: '#d1d5db', fontSize: '1rem' }}>
                                     You have already completed this question in <strong style={{color: '#fff'}}>{LANG_OPTIONS.find(l => l.id === language)?.label || language}</strong> language.<br/><br/>
-                                    Please solve using another programming language.<br/>
-                                    <span style={{fontSize: '0.85rem', color: '#9ca3af'}}>For any doubts contact your respective lab faculty.</span>
+                                    Please solve again using another language. Contact faculty for doubts.
                                 </p>
                             </div>
                         )}
@@ -467,7 +493,11 @@ const ProblemDetail = () => {
                             onMount={handleEditorMount}
                             options={{
                                 readOnly: !compilerEnabled,
-                                fontSize: 14,
+                                fontSize: 18,
+                                lineNumbers: 'on',
+                                autoIndent: 'full',
+                                autoClosingBrackets: 'always',
+                                autoClosingQuotes: 'always',
                                 minimap: { enabled: false },
                                 scrollBeyondLastLine: false,
                                 automaticLayout: true,
@@ -496,7 +526,7 @@ const ProblemDetail = () => {
                         <div style={{ padding: '0.55rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#9ca3af', fontSize: '0.85rem' }}>
                             <Terminal size={16} /> Output console
                         </div>
-                        <div style={{ flex: 1, padding: '1rem', overflowY: 'auto', fontSize: '0.88rem', fontFamily: 'ui-monospace, monospace' }}>
+                        <div style={{ flex: 1, padding: '1rem', overflowY: 'auto', fontSize: '16px', fontFamily: 'ui-monospace, monospace' }}>
                             {submitSummary && (
                                 <div style={{ marginBottom: '1rem', padding: '0.85rem', borderRadius: '10px', background: 'rgba(0,0,0,0.35)', border: '1px solid rgba(255,255,255,0.08)' }}>
                                     <div style={{ fontWeight: 700, color: submitSummary.status === 'Accepted' ? '#34d399' : '#f87171', marginBottom: '0.5rem' }}>
@@ -519,6 +549,21 @@ const ProblemDetail = () => {
                                                         </li>
                                                     ))}
                                                 </ul>
+                                            )}
+                                            {submitSummary.status === 'Accepted' && (
+                                                <div style={{ marginTop: '0.8rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.6rem' }}>
+                                                    {[
+                                                        ['Base Points', submitSummary.basePoints || 0],
+                                                        ['Speed Bonus', `+${submitSummary.speedBonus ?? submitSummary.timeBonus ?? 0}`],
+                                                        ['Accuracy Bonus', `+${submitSummary.accuracyBonus || 0}`],
+                                                        ['Total Earned', `+${submitSummary.earnedPoints || 0}`],
+                                                    ].map(([label, value]) => (
+                                                        <div key={label} style={{ padding: '0.6rem', borderRadius: '8px', background: 'rgba(130,84,238,0.14)', border: '1px solid rgba(231,201,101,0.22)' }}>
+                                                            <div style={{ color: '#c1cfc1', fontSize: '0.78rem' }}>{label}</div>
+                                                            <div style={{ color: label === 'Total Earned' ? '#e7c965' : '#ffffff', fontWeight: 800, fontSize: '1rem' }}>{value}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             )}
                                         </>
                                     )}
@@ -577,6 +622,75 @@ const ProblemDetail = () => {
                             <ShieldAlert size={20} />
                             {toast}
                         </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+            <AnimatePresence>
+                {pointsToast && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="reward-overlay"
+                    >
+                        <div className="reward-confetti">
+                            {confettiPieces.map((piece) => (
+                                <span
+                                    key={piece.id}
+                                    style={{
+                                        left: piece.left,
+                                        animationDelay: piece.delay,
+                                        animationDuration: piece.duration,
+                                        background: piece.color,
+                                        width: `${piece.size}px`,
+                                        height: `${piece.size * 1.8}px`,
+                                    }}
+                                />
+                            ))}
+                        </div>
+                        <motion.div
+                            initial={{ opacity: 0, y: 36, scale: 0.86 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -24, scale: 0.96 }}
+                            transition={{ type: 'spring', stiffness: 220, damping: 18 }}
+                            className="reward-popup"
+                        >
+                            <motion.div
+                                initial={{ scale: 0, rotate: -20 }}
+                                animate={{ scale: 1, rotate: 0 }}
+                                transition={{ delay: 0.12, type: 'spring', stiffness: 260, damping: 12 }}
+                                className="reward-check"
+                            >
+                                <CheckCircle2 size={54} />
+                            </motion.div>
+                            <div className="reward-title">Accepted Successfully</div>
+                            <motion.div
+                                initial={{ y: 16, opacity: 0 }}
+                                animate={{ y: 0, opacity: 1 }}
+                                transition={{ delay: 0.18 }}
+                                className="reward-points"
+                            >
+                                +{pointsToast.earnedPoints} Points Earned
+                            </motion.div>
+                            <div className="reward-breakdown">
+                                <div><span>Base Points</span><strong>{pointsToast.basePoints}</strong></div>
+                                <div><span>Speed Bonus</span><strong>+{pointsToast.speedBonus}</strong></div>
+                                <div><span>Accuracy Bonus</span><strong>+{pointsToast.accuracyBonus}</strong></div>
+                            </div>
+                            <div className="reward-total">
+                                <span>Total Points</span>
+                                <strong>{pointsToast.totalUserPoints}</strong>
+                                {pointsToast.rank ? <em>Rank #{pointsToast.rank}</em> : null}
+                            </div>
+                        </motion.div>
+                        <motion.div
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: [0, 1, 1, 0], y: [20, 0, -24, -58] }}
+                            transition={{ duration: 2.3, delay: 0.25 }}
+                            className="floating-points reward-float"
+                        >
+                            +{pointsToast.earnedPoints}
+                        </motion.div>
                     </motion.div>
                 )}
             </AnimatePresence>

@@ -18,8 +18,9 @@ router.get('/', async (req, res) => {
                 const decoded = jwt.verify(token, process.env.JWT_SECRET);
                 if (decoded.user) {
                     const student = await User.findById(decoded.user.id);
-                    if (student && student.selectedLab) {
-                        filter.labName = student.selectedLab;
+                    const assignedLab = student?.assignedLab || student?.selectedLab;
+                    if (student && assignedLab) {
+                        filter.labName = assignedLab;
                     }
                 } else if (decoded.admin) {
                     // Admin can see everything or filter by their lab
@@ -61,6 +62,20 @@ router.get('/:id', async (req, res) => {
         }
         const payload = question.toObject();
         if (!isStaff) {
+            if (token) {
+                try {
+                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                    if (decoded.user?.id) {
+                        const student = await User.findById(decoded.user.id).select('assignedLab selectedLab');
+                        const assignedLab = student?.assignedLab || student?.selectedLab;
+                        if (assignedLab && question.labName !== assignedLab) {
+                            return res.status(403).json({ message: 'You can only access questions from your assigned lab.' });
+                        }
+                    }
+                } catch {
+                    /* handled by normal hidden payload */
+                }
+            }
             const hidden = question.hiddenTestCases || [];
             payload.hiddenTestCaseCount = hidden.length;
             delete payload.hiddenTestCases;
@@ -113,7 +128,10 @@ router.post('/create', async (req, res) => {
             tags,
             unlockStartTime,
             unlockEndTime,
-            labName
+            labName,
+            basePoints,
+            pointsRewarded,
+            maxTimeForFullPoints
         } = req.body;
 
         // Required field validation
@@ -141,6 +159,8 @@ router.post('/create', async (req, res) => {
             isFinalWeek: isFinalWeek || false,
             unlockStartTime: unlockStartTime ? new Date(unlockStartTime) : null,
             unlockEndTime: unlockEndTime ? new Date(unlockEndTime) : null,
+            basePoints: Number(basePoints || pointsRewarded || 100),
+            maxTimeForFullPoints: Number(maxTimeForFullPoints || 60),
             sampleTestCases: [{ input: sampleInput, output: sampleOutput }],
             hiddenTestCases: [{ input: hiddenInput || '0', output: hiddenOutput || '0' }],
             tags: Array.isArray(tags) ? tags : (tags ? tags.split(',').map(t => t.trim()) : []),

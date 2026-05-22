@@ -39,8 +39,8 @@ const seedData = async () => {
             { lab: 'ADSAA', email: 'adsaa.labadmin@rgm.edu', password: 'ADSAA@123' },
             { lab: 'OS', email: 'os.labadmin@rgm.edu', password: 'OS@123' },
             { lab: 'CN', email: 'cn.labadmin@rgm.edu', password: 'CN@123' },
-            { lab: 'OOPS through Java', email: 'java.labadmin@rgm.edu', password: 'JAVA@123' },
-            { lab: 'Python', email: 'python.labadmin@rgm.edu', password: 'PYTHON@123' },
+            { lab: 'JAVA', email: 'java.labadmin@rgm.edu', password: 'JAVA@123' },
+            { lab: 'PYTHON', email: 'python.labadmin@rgm.edu', password: 'PYTHON@123' },
             { lab: 'DBMS', email: 'dbms.labadmin@rgm.edu', password: 'DBMS@123' },
             { lab: 'ML', email: 'ml.labadmin@rgm.edu', password: 'ML@123' },
             { lab: 'CNS', email: 'cns.labadmin@rgm.edu', password: 'CNS@123' },
@@ -60,6 +60,10 @@ const seedData = async () => {
         }
 
         // Add Mock Users
+        const bcrypt = require('bcryptjs');
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash('Syed@123', salt);
+
         await User.create({
             name: 'John Doe',
             email: 'john@example.com',
@@ -70,7 +74,7 @@ const seedData = async () => {
             classAndYear: '2nd Year',
             facultyName: 'Dr. Smith',
             regNo: '24091A0514',
-            dob: '26/03/2006',
+            password: hashedPassword,
             selectedLab: 'DBMS',
             completedTasks: 0,
             weeklyProgress: []
@@ -86,8 +90,9 @@ const seedData = async () => {
             classAndYear: '3rd Year',
             facultyName: 'Dr. John',
             regNo: '24091A0515',
-            dob: '01/01/2005',
-            selectedLab: 'OOPS through Java',
+            password: hashedPassword,
+            selectedLab: 'JAVA',
+            assignedLab: 'JAVA',
             completedTasks: 0,
             weeklyProgress: []
         });
@@ -102,7 +107,7 @@ const seedData = async () => {
 
         const week2 = await WeeklyTask.create({
             weekNumber: 2,
-            labName: 'OOPS through Java',
+            labName: 'JAVA',
             unlockDateTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Next week
             isUnlocked: false
         });
@@ -138,7 +143,7 @@ const seedData = async () => {
             {
                 title: 'Merge Intervals',
                 description: 'Given an array of intervals where intervals[i] = [starti, endi], merge all overlapping intervals.',
-                labName: 'OOPS through Java',
+                labName: 'JAVA',
                 difficulty: 'Medium',
                 inputFormat: 'First line n. Next n lines contain start and end.',
                 outputFormat: 'Merged intervals, one per line.',

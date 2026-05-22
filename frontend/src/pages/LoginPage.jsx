@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { LogIn, User, Mail, Lock, Calendar } from 'lucide-react';
+import { LogIn, User, Mail, Lock } from 'lucide-react';
 import { motion } from 'framer-motion';
 
 const ADMIN_PORTALS = [
-    { id: 'superadmin', label: 'Super Admin' },
+    { id: 'hod', label: 'HOD' },
+    { id: 'faculty', label: 'Faculty' },
     { id: 'labadmin', label: 'Lab Admin' },
-    { id: 'admin', label: 'Faculty / Admin' },
+    { id: 'admin', label: 'Admin' },
 ];
 
 /**
@@ -16,34 +17,41 @@ const ADMIN_PORTALS = [
 const LoginPage = () => {
     const [isStudent, setIsStudent] = useState(true);
     const [regNo, setRegNo] = useState('');
-    const [dob, setDob] = useState('');
-    const [adminPortal, setAdminPortal] = useState('superadmin');
+    const [adminPortal, setAdminPortal] = useState('hod');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const { login, loginAdmin } = useAuth();
     const navigate = useNavigate();
-
+ 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
         try {
             if (isStudent) {
-                await login(regNo, dob);
+                const trimmedRegNo = String(regNo).trim();
+                await login(trimmedRegNo, password);
                 navigate('/dashboard');
             } else {
                 const data = await loginAdmin(email, password, adminPortal);
                 const role = data.role || data.admin?.role;
-                if (role === 'superadmin') navigate('/super-admin');
+                if (role === 'superadmin' || role === 'hod') navigate('/super-admin');
                 else if (role === 'labadmin') navigate('/lab-admin');
-                else if (role === 'admin') navigate('/admin');
+                else if (role === 'admin' || role === 'faculty') navigate('/admin');
                 else navigate('/login');
             }
         } catch (err) {
-            setError(err.response?.data?.message || 'Invalid credentials');
+            if (isStudent && err.response?.status === 404) {
+                setError('Student account not found. Please register first.');
+                setTimeout(() => {
+                    navigate('/register');
+                }, 2000);
+            } else {
+                setError(err.response?.data?.message || 'Invalid credentials');
+            }
         }
     };
-
+ 
     return (
         <div
             className="login-container"
@@ -55,6 +63,7 @@ const LoginPage = () => {
                 padding: '20px',
                 position: 'relative',
                 overflow: 'hidden',
+                fontFamily: 'Times New Roman, serif',
             }}
         >
             <motion.div
@@ -64,7 +73,7 @@ const LoginPage = () => {
                     position: 'absolute',
                     width: '50vw',
                     height: '50vw',
-                    background: 'radial-gradient(circle, rgba(167,139,250,0.15) 0%, rgba(0,0,0,0) 70%)',
+                    background: 'radial-gradient(circle, rgba(130,84,238,0.15) 0%, rgba(0,0,0,0) 70%)',
                     top: '-10%',
                     left: '-10%',
                     zIndex: 0,
@@ -77,19 +86,19 @@ const LoginPage = () => {
                     position: 'absolute',
                     width: '40vw',
                     height: '40vw',
-                    background: 'radial-gradient(circle, rgba(186,230,253,0.15) 0%, rgba(0,0,0,0) 70%)',
+                    background: 'radial-gradient(circle, rgba(130,84,238,0.15) 0%, rgba(0,0,0,0) 70%)',
                     bottom: '-10%',
                     right: '-10%',
                     zIndex: 0,
                 }}
             />
-
+ 
             <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5 }}
                 className="card"
-                style={{ width: '100%', maxWidth: '460px', zIndex: 1, paddingTop: '2.5rem', background: 'rgba(255,255,255,0.08)' }}
+                style={{ width: '100%', maxWidth: '460px', zIndex: 1, paddingTop: '2.5rem', background: 'rgba(9,9,9,0.85)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '1rem', boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)' }}
             >
                 <div style={{ textAlign: 'center', marginBottom: '2rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                     <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -135,14 +144,14 @@ const LoginPage = () => {
                         style={{
                             fontSize: '1.8rem',
                             fontWeight: '800',
-                            background: 'var(--gradient-primary)',
+                            background: 'linear-gradient(to right, #8254ee, #82717b)',
                             WebkitBackgroundClip: 'text',
                             WebkitTextFillColor: 'transparent',
                             margin: 0,
                             letterSpacing: '1px',
                         }}
                     >
-                        RGMCET COMPILER
+                        RGMCSE COMPILER
                     </h1>
                     <p style={{ color: '#ffffff', margin: '0.5rem 0 0 0', fontWeight: 'bold', fontSize: '1.1rem' }}>
                         Rajeev Gandhi Memorial College Of Engineering And Technology
@@ -151,19 +160,20 @@ const LoginPage = () => {
                         Department of Computer Science and Engineering
                     </p>
                 </div>
-
-                <div style={{ display: 'flex', marginBottom: '1.5rem', backgroundColor: 'var(--bg)', borderRadius: '0.5rem', overflow: 'hidden' }}>
+ 
+                <div style={{ display: 'flex', marginBottom: '1.5rem', backgroundColor: '#090909', borderRadius: '0.5rem', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
                     <button
                         type="button"
                         onClick={() => setIsStudent(true)}
                         style={{
                             flex: 1,
                             padding: '10px',
-                            backgroundColor: isStudent ? 'var(--primary)' : 'transparent',
-                            color: isStudent ? 'white' : 'var(--text)',
+                            backgroundColor: isStudent ? '#8254ee' : 'transparent',
+                            color: 'white',
                             border: 'none',
                             cursor: 'pointer',
                             transition: 'all 0.3s',
+                            fontWeight: isStudent ? 'bold' : 'normal',
                         }}
                     >
                         Student
@@ -174,31 +184,32 @@ const LoginPage = () => {
                         style={{
                             flex: 1,
                             padding: '10px',
-                            backgroundColor: !isStudent ? 'var(--primary)' : 'transparent',
-                            color: !isStudent ? 'white' : 'var(--text)',
+                            backgroundColor: !isStudent ? '#8254ee' : 'transparent',
+                            color: 'white',
                             border: 'none',
                             cursor: 'pointer',
                             transition: 'all 0.3s',
+                            fontWeight: !isStudent ? 'bold' : 'normal',
                         }}
                     >
                         Staff
                     </button>
                 </div>
-
-                {error && <div style={{ color: 'var(--error)', marginBottom: '1rem', textAlign: 'center' }}>{error}</div>}
-
+ 
+                {error && <div style={{ color: '#ff5c5c', marginBottom: '1rem', textAlign: 'center', fontWeight: 'bold' }}>{error}</div>}
+ 
                 <form onSubmit={handleSubmit}>
                     {isStudent ? (
                         <>
                             <div style={{ marginBottom: '1.25rem' }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Registration number</label>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#c1cfc1' }}>Registration number</label>
                                 <div style={{ position: 'relative' }}>
                                     <User size={18} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'gray' }} />
                                     <input
                                         type="text"
                                         className="card"
-                                        style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '0.5rem' }}
-                                        placeholder="e.g. 24091a0514 (case insensitive)"
+                                        style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
+                                        placeholder="e.g. 24091a0514"
                                         value={regNo}
                                         onChange={(e) => setRegNo(e.target.value)}
                                         required
@@ -207,29 +218,31 @@ const LoginPage = () => {
                                 </div>
                             </div>
                             <div style={{ marginBottom: '1.5rem' }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Date of birth</label>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#c1cfc1' }}>Password</label>
                                 <div style={{ position: 'relative' }}>
-                                    <Calendar size={18} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'gray' }} />
+                                    <Lock size={18} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'gray' }} />
                                     <input
-                                        type="text"
+                                        type="password"
                                         className="card"
-                                        style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '0.5rem' }}
-                                        placeholder="DD/MM/YYYY (e.g. 26/03/2006)"
-                                        value={dob}
-                                        onChange={(e) => setDob(e.target.value)}
+                                        style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
+                                        placeholder="••••••••"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
                                         required
-                                        autoComplete="bday"
+                                        autoComplete="current-password"
                                     />
                                 </div>
                             </div>
-                            <div style={{ marginBottom: '1rem', fontSize: '0.8rem', color: 'gray', textAlign: 'center', padding: '10px', background: 'var(--bg)', borderRadius: '8px' }}>
-                                Demo: Reg <b>24091A0514</b> · DOB <b>26/03/2006</b>
+                            <div style={{ marginBottom: '1rem', fontSize: '0.8rem', color: '#c1cfc1', textAlign: 'center', padding: '10px', background: 'rgba(0, 208, 132, 0.1)', borderRadius: '8px', border: '1px solid rgba(0, 208, 132, 0.3)' }}>
+                                <strong>Test Credentials:</strong><br/>
+                                Reg/Email: <b>syedamanmirzanulla@gmail.com</b> · Pass: <b>Syed@123</b><br/>
+                                Staff/HOD: <b>syedamanmirzanulla@gmail.com</b> / <b>Syed@123</b>
                             </div>
                         </>
                     ) : (
                         <>
                             <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Sign in as</label>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#c1cfc1' }}>Sign in as</label>
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                                     {ADMIN_PORTALS.map((p) => (
                                         <button
@@ -240,9 +253,9 @@ const LoginPage = () => {
                                                 flex: '1 1 120px',
                                                 padding: '8px',
                                                 borderRadius: '8px',
-                                                border: adminPortal === p.id ? '2px solid var(--primary)' : '1px solid var(--border)',
-                                                background: adminPortal === p.id ? 'rgba(130,84,238,0.2)' : 'transparent',
-                                                color: 'var(--text)',
+                                                border: adminPortal === p.id ? '2px solid #8254ee' : '1px solid rgba(255,255,255,0.1)',
+                                                background: adminPortal === p.id ? 'rgba(130,84,238,0.2)' : '#090909',
+                                                color: 'white',
                                                 cursor: 'pointer',
                                                 fontSize: '0.85rem',
                                             }}
@@ -253,13 +266,13 @@ const LoginPage = () => {
                                 </div>
                             </div>
                             <div style={{ marginBottom: '1.25rem' }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Email</label>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#c1cfc1' }}>Email</label>
                                 <div style={{ position: 'relative' }}>
                                     <Mail size={18} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'gray' }} />
                                     <input
                                         type="email"
                                         className="card"
-                                        style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '0.5rem' }}
+                                        style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
                                         placeholder="you@college.edu"
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
@@ -269,13 +282,13 @@ const LoginPage = () => {
                                 </div>
                             </div>
                             <div style={{ marginBottom: '1.5rem' }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Password</label>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: '#c1cfc1' }}>Password</label>
                                 <div style={{ position: 'relative' }}>
                                     <Lock size={18} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'gray' }} />
                                     <input
                                         type="password"
                                         className="card"
-                                        style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '0.5rem' }}
+                                        style={{ width: '100%', padding: '10px 10px 10px 40px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
                                         placeholder="••••••••"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
@@ -286,18 +299,40 @@ const LoginPage = () => {
                             </div>
                         </>
                     )}
-
+ 
                     <motion.button
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         type="submit"
                         className="btn btn-primary"
-                        style={{ width: '100%', justifyContent: 'center', padding: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}
+                        style={{ width: '100%', justifyContent: 'center', padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', background: 'linear-gradient(135deg, #8254ee, #3b353c)', border: 'none', color: 'white', fontWeight: 'bold' }}
                     >
                         <LogIn size={18} />
                         Login
                     </motion.button>
                 </form>
+
+                {isStudent && (
+                    <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+                        <span style={{ color: '#c1cfc1', fontSize: '0.9rem' }}>New student? </span>
+                        <button
+                            type="button"
+                            onClick={() => navigate('/register')}
+                            style={{
+                                background: 'none',
+                                border: 'none',
+                                color: '#8254ee',
+                                textDecoration: 'underline',
+                                cursor: 'pointer',
+                                fontSize: '0.9rem',
+                                fontWeight: 'bold',
+                                padding: 0
+                            }}
+                        >
+                            Register here
+                        </button>
+                    </div>
+                )}
             </motion.div>
         </div>
     );

@@ -58,7 +58,7 @@ const AdminDashboard = () => {
     const [adminForm, setAdminForm] = useState({ name: '', email: '', password: '', assignedLab: '', phone: '' });
     const [toast, setToast] = useState(null);
 
-    const LABS = ["C", "DS", "ADSAA", "OS", "CN", "OOPS through Java", "Python", "DBMS", "ML", "CNS", "FSAD", "AI", "Thinkering Lab"];
+    const LABS = ["C", "DS", "ADSAA", "JAVA", "PYTHON", "DBMS", "OS", "CN", "AI", "ML", "FSAD"];
 
     useEffect(() => {
         if (!user) {

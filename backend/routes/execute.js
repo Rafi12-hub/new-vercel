@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const Question = require('../models/Question');
 const Submission = require('../models/Submission');
 const User = require('../models/User');
+const Notification = require('../models/Notification');
 
 const JUDGE0_URL = process.env.JUDGE0_API_URL;
 const JUDGE0_KEY = process.env.JUDGE0_API_KEY;
@@ -209,7 +210,7 @@ router.post('/run', async (req, res) => {
 // @route   POST api/execute/submit
 // @desc    Submit against sample + hidden; response never includes hidden I/O
 router.post('/submit', async (req, res) => {
-    const { code, language, questionId } = req.body;
+    const { code, language, questionId, solveStartedAt } = req.body;
 
     try {
         let userId = req.body.userId;
@@ -228,6 +229,13 @@ router.post('/submit', async (req, res) => {
 
         const question = await Question.findById(questionId);
         if (!question) return res.status(404).json({ message: 'Question not found' });
+
+        const user = await User.findById(userId);
+        if (!user) return res.status(404).json({ message: 'Student not found' });
+        const studentLab = user.assignedLab || user.selectedLab;
+        if (studentLab && question.labName && studentLab !== question.labName) {
+            return res.status(403).json({ message: 'You can only access questions from your assigned lab.' });
+        }
 
         const currentTime = new Date(
             new Date().toLocaleString("en-US", {
@@ -256,8 +264,8 @@ router.post('/submit', async (req, res) => {
             });
         }
 
-        const samples = question.sampleTestCases || [];
-        const hidden = question.hiddenTestCases || [];
+        const samples = question.sampleTestCases?.length ? question.sampleTestCases : [{ input: question.sampleInput || '', output: question.sampleOutput || '' }];
+        const hidden = question.hiddenTestCases?.length ? question.hiddenTestCases : [{ input: question.hiddenInput || '', output: question.hiddenOutput || '' }];
         const allTestCases = [...samples, ...hidden];
 
         let passedCount = 0;
@@ -314,6 +322,30 @@ router.post('/submit', async (req, res) => {
         const overallStatus = passedCount === allTestCases.length ? 'Accepted' : 'Wrong Answer';
         const complexity = analyzeComplexity(code, language);
 
+        // Calculate points based on acceptance and solve time
+        let earnedPoints = 0;
+        let basePoints = question.basePoints || 100;
+        let timeBonus = 0;
+        let accuracyBonus = 0;
+        const previousAcceptedSameLanguage = await Submission.exists({
+            user: userId,
+            question: questionId,
+            language,
+            status: 'Accepted',
+        });
+        const attemptCount = await Submission.countDocuments({ user: userId, question: questionId });
+        const solveTime = solveStartedAt ? Math.max(0, Math.floor((Date.now() - new Date(solveStartedAt).getTime()) / 1000)) : 0;
+
+        if (overallStatus === 'Accepted' && !previousAcceptedSameLanguage) {
+            earnedPoints = basePoints;
+            
+            const maxTimeForFullPoints = question.maxTimeForFullPoints || 60; // minutes
+            const elapsedMinutes = solveTime > 0 ? solveTime / 60 : 0;
+            timeBonus = Math.max(0, Math.round(20 * Math.max(0, 1 - elapsedMinutes / maxTimeForFullPoints)));
+            accuracyBonus = Math.max(0, 5 - Math.min(5, attemptCount * 2));
+            earnedPoints += timeBonus + accuracyBonus;
+        }
+
         const submission = new Submission({
             user: userId,
             question: questionId,
@@ -322,16 +354,69 @@ router.post('/submit', async (req, res) => {
             status: overallStatus,
             testCasesPassed: passedCount,
             totalTestCases: allTestCases.length,
+            sampleTestsPassed: caseSummaries.filter((c) => c.caseType === 'sample' && c.passed).length,
+            hiddenTestsPassed: caseSummaries.filter((c) => c.caseType === 'hidden' && c.passed).length,
             timeComplexity: complexity.time,
             spaceComplexity: complexity.space,
+            basePoints,
+            timeBonus,
+            accuracyBonus,
+            earnedPoints,
+            solveTime,
+            attemptNumber: attemptCount + 1,
+            isPreviouslyAccepted: Boolean(previousAcceptedSameLanguage)
         });
 
         await submission.save();
 
-        const user = await User.findById(userId);
         if (user) {
-            user.completedTasks += 1;
             user.submissions.push(submission._id);
+            user.totalSubmissions = (user.totalSubmissions || 0) + 1;
+            
+            if (overallStatus === 'Accepted') {
+                user.acceptedSubmissions = (user.acceptedSubmissions || 0) + 1;
+                user.totalPoints = (user.totalPoints || 0) + earnedPoints;
+                if (!previousAcceptedSameLanguage) {
+                    user.completedTasks = (user.completedTasks || 0) + 1;
+                }
+            }
+
+            user.successRate = user.totalSubmissions > 0
+                ? Math.round((user.acceptedSubmissions / user.totalSubmissions) * 100)
+                : 0;
+
+            const weekIndex = (user.weeklyProgress || []).findIndex((w) => Number(w.week) === Number(question.weekNumber));
+            const totalWeekTasks = await Question.countDocuments({ labName: question.labName, weekNumber: question.weekNumber });
+            if (weekIndex >= 0) {
+                const week = user.weeklyProgress[weekIndex];
+                week.points = (week.points || 0) + earnedPoints;
+                if (overallStatus === 'Accepted' && !previousAcceptedSameLanguage) {
+                    week.tasksCompleted = (week.tasksCompleted || 0) + 1;
+                }
+                week.totalTasks = totalWeekTasks;
+                week.progress = totalWeekTasks > 0 ? Math.round((week.tasksCompleted / totalWeekTasks) * 100) : 0;
+            } else {
+                const completedNow = overallStatus === 'Accepted' && !previousAcceptedSameLanguage ? 1 : 0;
+                user.weeklyProgress.push({
+                    week: question.weekNumber,
+                    tasksCompleted: completedNow,
+                    totalTasks: totalWeekTasks,
+                    progress: totalWeekTasks > 0 ? Math.round((completedNow / totalWeekTasks) * 100) : 0,
+                    points: earnedPoints,
+                });
+            }
+
+            const monthName = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date());
+            const monthIndex = (user.monthlyProgress || []).findIndex((m) => m.month === monthName);
+            if (monthIndex >= 0) {
+                user.monthlyProgress[monthIndex].points = (user.monthlyProgress[monthIndex].points || 0) + earnedPoints;
+                user.monthlyProgress[monthIndex].submissions = (user.monthlyProgress[monthIndex].submissions || 0) + 1;
+            } else {
+                user.monthlyProgress.push({ month: monthName, points: earnedPoints, submissions: 1 });
+            }
+            
+            await user.save();
+            user.rank = await User.countDocuments({ totalPoints: { $gt: user.totalPoints || 0 } }) + 1;
             await user.save();
         }
 
@@ -339,13 +424,54 @@ router.post('/submit', async (req, res) => {
             .populate('user', 'name regNo')
             .populate('question', 'title');
 
+        // Create and persist notification
+        const notificationText = overallStatus === 'Accepted' 
+            ? `🎉 Submission accepted for ${question.title}! Earned ${earnedPoints} points!` 
+            : `Submission rejected for ${question.title}. Try again!`;
+        const notificationType = overallStatus === 'Accepted' ? 'success' : 'danger';
+        
+        const newNotification = new Notification({
+            userId,
+            text: notificationText,
+            type: notificationType,
+            unread: true
+        });
+        await newNotification.save();
+
+        const leaderboard = await User.find()
+            .select('name regNo totalPoints rank assignedLab selectedLab')
+            .sort({ totalPoints: -1, updatedAt: 1 })
+            .limit(10)
+            .lean();
+
+        const pointsPayload = {
+            userId,
+            questionId,
+            status: overallStatus,
+            accepted: overallStatus === 'Accepted',
+            questionTitle: question.title,
+            basePoints,
+            speedBonus: timeBonus,
+            timeBonus,
+            accuracyBonus,
+            earnedPoints,
+            totalUserPoints: user?.totalPoints || 0,
+            rank: user?.rank || 0,
+            weeklyProgress: user?.weeklyProgress || [],
+            monthlyProgress: user?.monthlyProgress || [],
+            leaderboard,
+            previouslyAccepted: Boolean(previousAcceptedSameLanguage),
+        };
+
         if (req.app.locals.io) {
             req.app.locals.io.emit('submissionAdded', populatedSubmission);
             req.app.locals.io.emit('progressUpdated', user);
-            req.app.locals.io.emit('notification', {
-                text: `Submission for "${question.title}": ${overallStatus}`,
-                type: overallStatus === 'Accepted' ? 'success' : 'task',
+            if (overallStatus === 'Accepted') {
+                req.app.locals.io.emit('pointsAwarded', pointsPayload);
+            }
+            req.app.locals.io.emit('newNotification', {
                 userId,
+                notification: newNotification
             });
         }
 
@@ -361,6 +487,14 @@ router.post('/submit', async (req, res) => {
             timeComplexity: complexity.time,
             spaceComplexity: complexity.space,
             submissionId: submission._id,
+            earnedPoints,
+            basePoints,
+            speedBonus: timeBonus,
+            timeBonus,
+            accuracyBonus,
+            totalUserPoints: user?.totalPoints || 0,
+            rank: user?.rank || 0,
+            leaderboard
         });
     } catch (err) {
         console.error(err);

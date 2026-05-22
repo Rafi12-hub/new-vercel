@@ -32,7 +32,7 @@ router.get('/', authAny, async (req, res) => {
         } else if (req.user) {
             // Student sees events for their lab
             const user = await User.findById(req.user.id);
-            query.labName = user.selectedLab;
+            query.labName = user.assignedLab || user.selectedLab;
         }
 
         const events = await ScheduleEvent.find(query).populate('createdBy', 'name email role');
@@ -86,7 +86,7 @@ router.delete('/:id', authAny, async (req, res) => {
         if (!event) return res.status(404).json({ message: 'Event not found' });
 
         // Lab admins can only delete their own lab's events
-        if (req.admin.role !== 'superadmin' && event.labName !== req.admin.assignedLab) {
+        if (!['superadmin', 'hod'].includes(req.admin.role) && event.labName !== req.admin.assignedLab) {
             return res.status(403).json({ message: 'Forbidden' });
         }
 

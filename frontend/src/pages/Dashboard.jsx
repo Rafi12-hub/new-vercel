@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import {
@@ -29,7 +29,7 @@ import {
 import { jsPDF } from 'jspdf';
 import axios from 'axios';
 import { io } from 'socket.io-client';
-import { motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'framer-motion';
 
 const formatIST = (dateString) => {
     if (!dateString) return '—';
@@ -42,23 +42,10 @@ import PremiumHeader from '../components/PremiumHeader';
 
 const socket = io('http://localhost:5000');
 
-const DIFFICULTY_POINTS = { Easy: 10, Medium: 20, Hard: 30 };
-
 const userKey = (u) => (u?._id || u?.id || '').toString();
 
 function pointsFromAccepted(submissions) {
-    const perQuestion = new Map();
-    for (const s of submissions || []) {
-        if (s.status !== 'Accepted') continue;
-        const q = s.question;
-        const qid = q?._id != null ? String(q._id) : s.question != null ? String(s.question) : '';
-        if (!qid) continue;
-        const diff = q?.difficulty || 'Easy';
-        perQuestion.set(qid, DIFFICULTY_POINTS[diff] ?? 10);
-    }
-    let sum = 0;
-    for (const p of perQuestion.values()) sum += p;
-    return sum;
+    return (submissions || []).reduce((sum, s) => sum + (s.status === 'Accepted' ? Number(s.earnedPoints || 0) : 0), 0);
 }
 
 function buildSolvedQuestionIds(submissions) {
@@ -77,7 +64,7 @@ function buildSolvedQuestionIds(submissions) {
 }
 
 const Dashboard = () => {
-    const { user, refreshUser } = useAuth();
+    const { user } = useAuth();
     const [weeklyTasks, setWeeklyTasks] = useState([]);
     const [stats, setStats] = useState({
         solved: 0,
@@ -85,10 +72,19 @@ const Dashboard = () => {
         accuracy: 0,
         progressPct: 0,
         points: 0,
+        weeklyPoints: 0,
+        monthlyPoints: 0,
+        rank: 0,
     });
     const [submissions, setSubmissions] = useState([]);
     const [currentWeekLabel, setCurrentWeekLabel] = useState('—');
     const [notifications, setNotifications] = useState([]);
+    const [displayPoints, setDisplayPoints] = useState(0);
+    const [pointsPulse, setPointsPulse] = useState(false);
+    const [liveReward, setLiveReward] = useState(null);
+    const [recentSolvedId, setRecentSolvedId] = useState(null);
+    const [leaderboard, setLeaderboard] = useState([]);
+    const previousPointsRef = useRef(0);
 
     const pushNotification = useCallback((item) => {
         setNotifications((prev) => {
@@ -114,7 +110,8 @@ const Dashboard = () => {
             const solvedIds = buildSolvedQuestionIds(subs);
             const uniqueSolved = solvedIds.size;
 
-            const labQuery = user?.selectedLab ? `?labName=${encodeURIComponent(user.selectedLab)}` : '';
+            const assignedLab = user?.assignedLab || user?.selectedLab;
+            const labQuery = assignedLab ? `?labName=${encodeURIComponent(assignedLab)}` : '';
             const fallbackRes = await axios.get(`http://localhost:5000/api/questions${labQuery}`);
             const questions = fallbackRes.data || [];
             const totalQ = questions.length;
@@ -124,7 +121,10 @@ const Dashboard = () => {
                 pending: Math.max(0, totalQ - uniqueSolved),
                 accuracy: totalQ > 0 ? Math.round((uniqueSolved / totalQ) * 100) : 0,
                 progressPct: totalQ > 0 ? Math.round((uniqueSolved / totalQ) * 100) : 0,
-                points: pointsFromAccepted(subs),
+                points: userRes.data.totalPoints ?? pointsFromAccepted(subs),
+                weeklyPoints: (userRes.data.weeklyProgress || []).reduce((sum, row) => sum + Number(row.points || 0), 0),
+                monthlyPoints: (userRes.data.monthlyProgress || []).reduce((sum, row) => sum + Number(row.points || 0), 0),
+                rank: userRes.data.rank || 0,
             });
 
             const grouped = questions.reduce((acc, q) => {
@@ -180,12 +180,14 @@ const Dashboard = () => {
         const onNotif = (n) => {
             if (n.userId && myId && n.userId.toString() !== myId) return;
             if (n.userId && !myId) return;
-            if (n.labName && user?.selectedLab && n.labName !== user.selectedLab) return;
+            const assignedLab = user?.assignedLab || user?.selectedLab;
+            if (n.labName && assignedLab && n.labName !== assignedLab) return;
             pushNotification({ ...n, fromSocket: true, id: n.id || `sock-${Date.now()}` });
         };
 
         const onWeekUnlock = (update) => {
-            if (update.labName && user?.selectedLab && update.labName !== user.selectedLab) return;
+            const assignedLab = user?.assignedLab || user?.selectedLab;
+            if (update.labName && assignedLab && update.labName !== assignedLab) return;
             pushNotification({
                 text: update.message || `Week ${update.weekNumber} is now available.`,
                 type: 'task',
@@ -207,7 +209,35 @@ const Dashboard = () => {
         socket.on('questionUpdated', fetchTasks);
         socket.on('questionDeleted', fetchTasks);
         socket.on('weekUnlocked', onWeekUnlock);
-        socket.on('notification', onNotif);
+            socket.on('notification', onNotif);
+        const onPointsAwarded = (payload) => {
+            if (payload.userId && myId && String(payload.userId) !== myId) return;
+            const earned = Number(payload.earnedPoints || 0);
+            if (earned <= 0) return;
+
+            setStats((prev) => ({
+                ...prev,
+                points: Number(payload.totalUserPoints ?? prev.points + earned),
+                weeklyPoints: (payload.weeklyProgress || []).reduce((sum, row) => sum + Number(row.points || 0), 0) || prev.weeklyPoints + earned,
+                monthlyPoints: (payload.monthlyProgress || []).reduce((sum, row) => sum + Number(row.points || 0), 0) || prev.monthlyPoints + earned,
+                rank: payload.rank || prev.rank,
+            }));
+            setLeaderboard(payload.leaderboard || []);
+            setRecentSolvedId(payload.questionId ? String(payload.questionId) : null);
+            setLiveReward(payload);
+            setPointsPulse(true);
+            pushNotification({
+                id: `points-${payload.questionId}-${Date.now()}`,
+                text: `+${earned} points: ${payload.questionTitle || 'Accepted solution'}`,
+                type: 'success',
+                fromSocket: true,
+            });
+            window.setTimeout(() => setPointsPulse(false), 1800);
+            window.setTimeout(() => setRecentSolvedId(null), 2400);
+            window.setTimeout(() => setLiveReward(null), 3200);
+        };
+
+        socket.on('pointsAwarded', onPointsAwarded);
 
         return () => {
             socket.off('submissionAdded', onSubmissionAdded);
@@ -217,8 +247,33 @@ const Dashboard = () => {
             socket.off('questionDeleted', fetchTasks);
             socket.off('weekUnlocked', onWeekUnlock);
             socket.off('notification', onNotif);
+            socket.off('pointsAwarded', onPointsAwarded);
         };
     }, [fetchTasks, user, pushNotification]);
+
+    useEffect(() => {
+        const start = previousPointsRef.current;
+        const end = Number(stats.points || 0);
+        if (start === end) {
+            setDisplayPoints(end);
+            return;
+        }
+        const startedAt = performance.now();
+        const duration = 900;
+        let frameId;
+        const tick = (now) => {
+            const progress = Math.min(1, (now - startedAt) / duration);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            setDisplayPoints(Math.round(start + (end - start) * eased));
+            if (progress < 1) {
+                frameId = requestAnimationFrame(tick);
+            } else {
+                previousPointsRef.current = end;
+            }
+        };
+        frameId = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(frameId);
+    }, [stats.points]);
 
     const solvedIds = buildSolvedQuestionIds(submissions);
 
@@ -395,7 +450,7 @@ const Dashboard = () => {
             >
                 <motion.div
                     whileHover={{ y: -5 }}
-                    className="card"
+                    className={`card ${pointsPulse ? 'points-card-pulse' : ''}`}
                     style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -418,9 +473,23 @@ const Dashboard = () => {
                         <Trophy size={28} />
                     </div>
                     <div>
-                        <h3 style={{ fontSize: '1.8rem', margin: 0, color: '#ffffff' }}>{stats.points}</h3>
+                        <h3 style={{ fontSize: '1.8rem', margin: 0, color: '#ffffff' }}>{displayPoints}</h3>
                         <p style={{ color: '#d6d6d6', margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>Points</p>
-                        <p style={{ color: 'gray', margin: '4px 0 0', fontSize: '0.75rem' }}>Easy 10 · Med 20 · Hard 30</p>
+                        <p style={{ color: 'gray', margin: '4px 0 0', fontSize: '0.75rem' }}>
+                            Week {stats.weeklyPoints} · Month {stats.monthlyPoints} · Rank #{stats.rank || '—'}
+                        </p>
+                        <AnimatePresence>
+                            {liveReward && (
+                                <motion.p
+                                    initial={{ opacity: 0, y: 8 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -8 }}
+                                    style={{ color: '#e7c965', margin: '6px 0 0', fontSize: '0.82rem', fontWeight: 800 }}
+                                >
+                                    +{liveReward.earnedPoints} earned now
+                                </motion.p>
+                            )}
+                        </AnimatePresence>
                     </div>
                 </motion.div>
                 <motion.div
@@ -585,53 +654,20 @@ const Dashboard = () => {
                             </div>
                             <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center', color: 'var(--text)', marginTop: '0.5rem' }}>
                                 <Monitor size={18} style={{ color: 'var(--primary)' }} />
-                                <select
+                                <span
                                     className="glass"
-                                    value={user?.selectedLab || ''}
-                                    onChange={async (e) => {
-                                        try {
-                                            const token = localStorage.getItem('token');
-                                            const newLab = e.target.value;
-                                            await axios.put(
-                                                'http://localhost:5000/api/auth/update-lab',
-                                                { lab: newLab },
-                                                { headers: { 'x-auth-token': token } }
-                                            );
-                                            await refreshUser();
-                                            void fetchTasks();
-                                        } catch (err) {
-                                            console.error('Error updating lab', err);
-                                        }
-                                    }}
                                     style={{
                                         padding: '6px 12px',
                                         borderRadius: '8px',
                                         border: '1px solid var(--border)',
                                         background: 'var(--surface)',
                                         color: 'var(--text)',
-                                        outline: 'none',
                                         width: '100%',
-                                        cursor: 'pointer',
                                         fontWeight: 'bold',
                                     }}
                                 >
-                                    <option value="" disabled>
-                                        Select Lab
-                                    </option>
-                                    <option value="C">C</option>
-                                    <option value="DS">DS</option>
-                                    <option value="ADSAA">ADSAA</option>
-                                    <option value="OS">OS</option>
-                                    <option value="CN">CN</option>
-                                    <option value="OOPS through Java">OOPS through Java</option>
-                                    <option value="Python">Python</option>
-                                    <option value="DBMS">DBMS</option>
-                                    <option value="ML">ML</option>
-                                    <option value="CNS">CNS</option>
-                                    <option value="FSAD">FSAD</option>
-                                    <option value="AI">AI</option>
-                                    <option value="Thinkering Lab">Thinkering Lab</option>
-                                </select>
+                                    Assigned Lab: {user?.assignedLab || user?.selectedLab || 'Not assigned'}
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -719,6 +755,42 @@ const Dashboard = () => {
                             ))}
                         </div>
                     </div>
+
+                    {leaderboard.length > 0 && (
+                        <div className="card">
+                            <h3 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <Trophy size={20} style={{ color: '#e7c965' }} /> Live leaderboard
+                            </h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                                {leaderboard.slice(0, 5).map((row, index) => {
+                                    const isMe = String(row._id || row.id) === userKey(user);
+                                    return (
+                                        <motion.div
+                                            key={row._id || row.regNo || index}
+                                            initial={{ opacity: 0, y: 8 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            style={{
+                                                display: 'grid',
+                                                gridTemplateColumns: '32px 1fr auto',
+                                                gap: '0.6rem',
+                                                alignItems: 'center',
+                                                padding: '8px',
+                                                borderRadius: '8px',
+                                                background: isMe ? 'rgba(231,201,101,0.13)' : 'rgba(255,255,255,0.04)',
+                                                border: isMe ? '1px solid rgba(231,201,101,0.32)' : '1px solid rgba(255,255,255,0.06)',
+                                            }}
+                                        >
+                                            <strong style={{ color: isMe ? '#e7c965' : '#c1cfc1' }}>#{index + 1}</strong>
+                                            <span style={{ color: '#ffffff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                {row.name || row.regNo || 'Student'}
+                                            </span>
+                                            <strong style={{ color: '#e7c965' }}>{row.totalPoints || 0}</strong>
+                                        </motion.div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                 </aside>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', flex: '3 1 400px', minWidth: 0, width: '100%' }}>
@@ -815,7 +887,7 @@ const Dashboard = () => {
                                             <motion.div
                                                 whileHover={task.isUnlocked ? { scale: 1.01 } : {}}
                                                 key={q._id}
-                                                className="card"
+                                                className={`card ${recentSolvedId === String(q._id) ? 'accepted-card-pulse' : ''}`}
                                                 style={{
                                                     padding: '1.2rem',
                                                     display: 'flex',
@@ -899,7 +971,7 @@ const Dashboard = () => {
                                                                 Tags: {q.tags?.join(', ') || 'None'}
                                                             </span>
                                                             {solvedIds.has(String(q._id)) && (
-                                                                <span style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600, border: '1px solid #10b981', padding: '2px 8px', borderRadius: '4px', background: 'rgba(16, 185, 129, 0.1)' }}>Accepted</span>
+                                                                <span className={recentSolvedId === String(q._id) ? 'accepted-badge-animate' : ''} style={{ fontSize: '0.75rem', color: '#10b981', fontWeight: 600, border: '1px solid #10b981', padding: '2px 8px', borderRadius: '4px', background: 'rgba(16, 185, 129, 0.1)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}><Check size={13} /> Accepted</span>
                                                             )}
                                                         </div>
                                                     </div>

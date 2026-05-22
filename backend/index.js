@@ -43,15 +43,16 @@ connectDB().then(async () => {
             
             // Super Admin
             await Admin.create({ 
+                name: 'HOD CSE',
                 email: 'hod@rgmcet.edu', 
                 password: 'HOD@1907', 
-                role: 'superadmin' 
+                role: 'hod' 
             });
 
             // Admin
             await Admin.create({
                 email: 'syedamanmirzanulla@gmail.com',
-                password: 'Syed@1907',
+                password: 'Syed@123',
                 role: 'admin',
                 name: 'Faculty Admin',
                 assignedLab: 'DS',
@@ -59,10 +60,13 @@ connectDB().then(async () => {
 
             // Lab Admins
             await Admin.create({ email: 'c.labadmin@rgm.edu', password: 'Admin@123', role: 'labadmin', assignedLab: 'C' });
-            await Admin.create({ email: 'java.labadmin@rgm.edu', password: 'Admin@123', role: 'labadmin', assignedLab: 'OOPS through Java' });
-            await Admin.create({ email: 'pythonadmin@platformhub.com', password: 'Admin@123', role: 'labadmin', assignedLab: 'Python' });
+            await Admin.create({ email: 'java.labadmin@rgm.edu', password: 'Admin@123', role: 'labadmin', assignedLab: 'JAVA' });
+            await Admin.create({ email: 'pythonadmin@platformhub.com', password: 'Admin@123', role: 'labadmin', assignedLab: 'PYTHON' });
 
             // Default Student
+            const bcrypt = require('bcryptjs');
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash('Syed@123', salt);
             await User.create({
                 name: 'John Doe', 
                 email: 'john@rgm.edu', 
@@ -70,9 +74,12 @@ connectDB().then(async () => {
                 branch: 'CSE', 
                 section: 'A', 
                 classAndYear: '2nd Year', 
+                year: '2nd Year',
                 regNo: '24091A0514', 
-                dob: '26/03/2006', 
+                password: hashedPassword, 
                 selectedLab: 'DBMS', 
+                assignedLab: 'DBMS', 
+                facultyName: 'RGMCSE Faculty',
                 completedTasks: 0, 
                 weeklyProgress: []
             });
@@ -113,6 +120,9 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/schedule', require('./routes/schedule'));
 app.use('/api/security', require('./routes/security'));
 app.use('/api/lab', require('./routes/lab'));
+app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/analytics', require('./routes/analytics'));
+app.use('/api/pdf', require('./routes/pdf'));
 
 const PORT = process.env.PORT || 5000;
 

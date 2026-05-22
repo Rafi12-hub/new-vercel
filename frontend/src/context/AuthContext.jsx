@@ -64,14 +64,21 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    const login = async (regNo, dob) => {
-        const res = await axios.post('http://localhost:5000/api/auth/login', { regNo, dob });
+    const login = async (regNo, password) => {
+        const res = await axios.post('http://localhost:5000/api/auth/login', { regNo, password });
         localStorage.setItem('token', res.data.token);
         setUser({ ...res.data.user, role: 'student' });
         return res.data;
     };
 
-    /** @param {string} expectedRole - 'superadmin' | 'labadmin' | 'admin' */
+    const register = async (userData) => {
+        const res = await axios.post('http://localhost:5000/api/auth/register', userData);
+        localStorage.setItem('token', res.data.token);
+        setUser({ ...res.data.user, role: 'student' });
+        return res.data;
+    };
+
+    /** @param {string} expectedRole - 'hod' | 'faculty' | 'labadmin' | 'admin' */
     const loginAdmin = async (email, password, expectedRole) => {
         const res = await axios.post('http://localhost:5000/api/admin/login', {
             email,
@@ -97,7 +104,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ user, loading, login, loginAdmin, logout, theme, toggleTheme, refreshUser }}>
+        <AuthContext.Provider value={{ user, loading, login, register, loginAdmin, logout, theme, toggleTheme, refreshUser }}>
             {children}
         </AuthContext.Provider>
     );

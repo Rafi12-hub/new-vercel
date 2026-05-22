@@ -102,7 +102,7 @@ const PremiumHeader = () => {
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <h1 style={{ fontSize: '1.5rem', fontWeight: 'bold', margin: 0, background: 'var(--gradient-primary)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-                            RGMCET COMPILER
+                            RGMCSE COMPILER
                         </h1>
                         <span style={{ fontSize: '0.75rem', padding: '0.1rem 0.5rem', background: 'var(--primary)', color: 'white', borderRadius: '1rem', fontWeight: 'bold' }}>PRO</span>
                     </div>
@@ -136,7 +136,7 @@ const PremiumHeader = () => {
 
             {/* Right Side: Profile & Actions */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
-                <div style={{ textAlign: 'right', display: 'none', '@media (min-width: 768px)': { display: 'block' } }}>
+                <div className="premium-header-user-meta" style={{ textAlign: 'right' }}>
                     <p style={{ margin: 0, fontWeight: 'bold', color: 'var(--text)' }}>{user?.name || user?.email}</p>
                     <p style={{ margin: 0, fontSize: '0.8rem', color: 'gray' }}>
                         {user?.role === 'superadmin'

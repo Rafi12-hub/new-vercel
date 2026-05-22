@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 import Dashboard from './pages/Dashboard';
 import ProblemDetail from './pages/ProblemDetail';
 import AdminDashboard from './pages/AdminDashboard';
@@ -10,9 +11,9 @@ import MyProgress from './pages/MyProgress';
 import { Moon, Sun } from 'lucide-react';
 
 const defaultPathForRole = (role) => {
-    if (role === 'superadmin') return '/super-admin';
+    if (role === 'superadmin' || role === 'hod') return '/super-admin';
     if (role === 'labadmin') return '/lab-admin';
-    if (role === 'admin') return '/admin';
+    if (role === 'admin' || role === 'faculty') return '/admin';
     return '/dashboard';
 };
 
@@ -56,11 +57,21 @@ const AppContent = () => {
                         )
                     }
                 />
+                <Route
+                    path="/register"
+                    element={
+                        !user ? (
+                            <RegisterPage />
+                        ) : (
+                            <Navigate to={defaultPathForRole(user.role)} replace />
+                        )
+                    }
+                />
                 <Route path="/dashboard" element={<PrivateRoute allowedRoles={['student']}><Dashboard /></PrivateRoute>} />
                 <Route path="/profile" element={<PrivateRoute allowedRoles={['student']}><MyProfile /></PrivateRoute>} />
                 <Route path="/progress" element={<PrivateRoute allowedRoles={['student']}><MyProgress /></PrivateRoute>} />
-                <Route path="/admin" element={<PrivateRoute allowedRoles={['admin']}><AdminDashboard /></PrivateRoute>} />
-                <Route path="/super-admin" element={<PrivateRoute allowedRoles={['superadmin']}><AdminDashboard /></PrivateRoute>} />
+                <Route path="/admin" element={<PrivateRoute allowedRoles={['admin', 'faculty']}><AdminDashboard /></PrivateRoute>} />
+                <Route path="/super-admin" element={<PrivateRoute allowedRoles={['superadmin', 'hod']}><AdminDashboard /></PrivateRoute>} />
                 <Route path="/lab-admin" element={<PrivateRoute allowedRoles={['labadmin']}><LabAdminDashboard /></PrivateRoute>} />
                 <Route path="/problem/:id" element={<PrivateRoute allowedRoles={['student']}><ProblemDetail /></PrivateRoute>} />
                 <Route path="*" element={<Navigate to="/login" replace />} />
