@@ -25,11 +25,43 @@ import {
     Lock,
     Download,
     FileText,
+    Search,
+    Layers,
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 import { AnimatePresence, motion } from 'framer-motion';
+
+// Standardized lab IDs for normalization
+const LABS_STANDARD = ['C', 'DS', 'ADSAA', 'JAVA', 'PYTHON', 'DBMS', 'OS', 'CN', 'AI', 'ML', 'FSAD'];
+const LAB_ALIASES = {
+  'C': ['c lab', 'c programming', 'c language'],
+  'DS': ['data structures', 'data structures lab', 'ds lab', 'datastructures'],
+  'ADSAA': ['ada', 'algorithm design', 'algorithms', 'adsaa lab'],
+  'JAVA': ['java lab', 'java programming'],
+  'PYTHON': ['python lab', 'python programming'],
+  'DBMS': ['database', 'database management', 'dbms lab'],
+  'OS': ['operating system', 'operating systems', 'os lab'],
+  'CN': ['computer networks', 'computer network', 'cn lab', 'networks'],
+  'AI': ['artificial intelligence', 'ai lab'],
+  'ML': ['machine learning', 'ml lab'],
+  'FSAD': ['full stack', 'full stack development', 'fullstack', 'fsad lab', 'web development'],
+};
+const normalizeLab = (name) => {
+  if (!name) return '';
+  const t = name.trim();
+  const u = t.toUpperCase();
+  for (const s of LABS_STANDARD) { if (u === s) return s; }
+  const l = t.toLowerCase();
+  for (const [s, aliases] of Object.entries(LAB_ALIASES)) {
+    if (aliases.some(a => l === a)) return s;
+  }
+  for (const [s, aliases] of Object.entries(LAB_ALIASES)) {
+    if (aliases.some(a => l.includes(a) || a.includes(l))) return s;
+  }
+  return u;
+};
 
 const formatIST = (dateString) => {
     if (!dateString) return '—';
@@ -65,6 +97,8 @@ function buildSolvedQuestionIds(submissions) {
 
 const Dashboard = () => {
     const { user } = useAuth();
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(null);
     const [weeklyTasks, setWeeklyTasks] = useState([]);
     const [stats, setStats] = useState({
         solved: 0,
@@ -84,6 +118,7 @@ const Dashboard = () => {
     const [liveReward, setLiveReward] = useState(null);
     const [recentSolvedId, setRecentSolvedId] = useState(null);
     const [leaderboard, setLeaderboard] = useState([]);
+    const [submissionFilter, setSubmissionFilter] = useState({ search: '', status: '' });
     const previousPointsRef = useRef(0);
 
     const pushNotification = useCallback((item) => {
@@ -94,14 +129,19 @@ const Dashboard = () => {
         });
     }, []);
 
-    const fetchTasks = useCallback(async () => {
+    const fetchTasks = useCallback(async (isSilent = false) => {
+        if (!isSilent) {
+            setIsLoading(true);
+        }
+        setError(null);
         try {
             const token = localStorage.getItem('token');
-            const userRes = await axios.get('http://localhost:5000/api/auth/me', {
+            const dashboardRes = await axios.get('http://localhost:5000/api/student/dashboard', {
                 headers: { 'x-auth-token': token },
             });
+            const userData = dashboardRes.data.user;
 
-            const subs = [...(userRes.data.submissions || [])].sort(
+            const subs = [...(userData.submissions || [])].sort(
                 (a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0)
             );
             setSubmissions(subs);
@@ -111,9 +151,21 @@ const Dashboard = () => {
             const uniqueSolved = solvedIds.size;
 
             const assignedLab = user?.assignedLab || user?.selectedLab;
-            const labQuery = assignedLab ? `?labName=${encodeURIComponent(assignedLab)}` : '';
-            const fallbackRes = await axios.get(`http://localhost:5000/api/questions${labQuery}`);
-            const questions = fallbackRes.data || [];
+            // Use the dedicated student questions endpoint for published+filtered questions
+            let questions = [];
+            try {
+                const studentQRes = await axios.get('http://localhost:5000/api/questions/student', {
+                    headers: { 'x-auth-token': token }
+                });
+                questions = studentQRes.data.questions || [];
+            } catch (e) {
+                // Fallback to regular endpoint if /student fails
+                const labQuery = assignedLab ? `?labName=${encodeURIComponent(normalizeLab(assignedLab))}` : '';
+                const fallbackRes = await axios.get(`http://localhost:5000/api/questions${labQuery}`, {
+                    headers: { 'x-auth-token': token }
+                });
+                questions = fallbackRes.data || [];
+            }
             const totalQ = questions.length;
 
             setStats({
@@ -121,10 +173,10 @@ const Dashboard = () => {
                 pending: Math.max(0, totalQ - uniqueSolved),
                 accuracy: totalQ > 0 ? Math.round((uniqueSolved / totalQ) * 100) : 0,
                 progressPct: totalQ > 0 ? Math.round((uniqueSolved / totalQ) * 100) : 0,
-                points: userRes.data.totalPoints ?? pointsFromAccepted(subs),
-                weeklyPoints: (userRes.data.weeklyProgress || []).reduce((sum, row) => sum + Number(row.points || 0), 0),
-                monthlyPoints: (userRes.data.monthlyProgress || []).reduce((sum, row) => sum + Number(row.points || 0), 0),
-                rank: userRes.data.rank || 0,
+                points: dashboardRes.data.stats.totalPoints || pointsFromAccepted(subs),
+                weeklyPoints: (userData.weeklyProgress || []).reduce((sum, row) => sum + Number(row.points || 0), 0),
+                monthlyPoints: (userData.monthlyProgress || []).reduce((sum, row) => sum + Number(row.points || 0), 0),
+                rank: dashboardRes.data.stats.rank || 0,
             });
 
             const grouped = questions.reduce((acc, q) => {
@@ -163,7 +215,14 @@ const Dashboard = () => {
                 return merged.slice(0, 24);
             });
         } catch (err) {
-            console.error(err);
+            console.error("Dashboard Fetch Error:", err);
+            if (err.code === 'ERR_NETWORK') {
+                setError("Network error: Cannot connect to the server. Please ensure the backend is running on port 5000.");
+            } else {
+                setError(`Failed to load dashboard data: ${err.response?.data?.message || err.message}`);
+            }
+        } finally {
+            setIsLoading(false);
         }
     }, [user]);
 
@@ -181,35 +240,47 @@ const Dashboard = () => {
             if (n.userId && myId && n.userId.toString() !== myId) return;
             if (n.userId && !myId) return;
             const assignedLab = user?.assignedLab || user?.selectedLab;
-            if (n.labName && assignedLab && n.labName !== assignedLab) return;
+            if (n.labName && assignedLab && normalizeLab(n.labName) !== normalizeLab(assignedLab)) return;
             pushNotification({ ...n, fromSocket: true, id: n.id || `sock-${Date.now()}` });
         };
 
         const onWeekUnlock = (update) => {
             const assignedLab = user?.assignedLab || user?.selectedLab;
-            if (update.labName && assignedLab && update.labName !== assignedLab) return;
+            if (update.labName && assignedLab && normalizeLab(update.labName) !== normalizeLab(assignedLab)) return;
             pushNotification({
                 text: update.message || `Week ${update.weekNumber} is now available.`,
                 type: 'task',
                 fromSocket: true,
                 id: `week-${update.weekNumber}-${update.labName || 'lab'}`,
             });
-            fetchTasks();
+            fetchTasks(true);
         };
 
         const onSubmissionAdded = (populated) => {
             const subUser = populated?.user?._id || populated?.user;
             if (myId && subUser && String(subUser) !== myId) return;
-            fetchTasks();
+            fetchTasks(true);
         };
 
         socket.on('submissionAdded', onSubmissionAdded);
-        socket.on('progressUpdated', fetchTasks);
-        socket.on('questionAdded', fetchTasks);
-        socket.on('questionUpdated', fetchTasks);
-        socket.on('questionDeleted', fetchTasks);
+        socket.on('progressUpdated', () => fetchTasks(true));
+        socket.on('questionAdded', () => fetchTasks(true));
+        socket.on('questionUpdated', () => fetchTasks(true));
+        socket.on('questionDeleted', () => fetchTasks(true));
+        socket.on('questionPublished', (data) => {
+            const assignedLab = user?.assignedLab || user?.selectedLab;
+            if (data.labName && assignedLab && normalizeLab(data.labName) === normalizeLab(assignedLab)) {
+                pushNotification({
+                    id: `qp-${data.questionId}-${Date.now()}`,
+                    text: `New lab question published: ${data.title} (Week ${data.weekNumber})`,
+                    type: 'task',
+                    fromSocket: true,
+                });
+                fetchTasks(true);
+            }
+        });
         socket.on('weekUnlocked', onWeekUnlock);
-            socket.on('notification', onNotif);
+        socket.on('notification', onNotif);
         const onPointsAwarded = (payload) => {
             if (payload.userId && myId && String(payload.userId) !== myId) return;
             const earned = Number(payload.earnedPoints || 0);
@@ -245,6 +316,7 @@ const Dashboard = () => {
             socket.off('questionAdded', fetchTasks);
             socket.off('questionUpdated', fetchTasks);
             socket.off('questionDeleted', fetchTasks);
+            socket.off('questionPublished');
             socket.off('weekUnlocked', onWeekUnlock);
             socket.off('notification', onNotif);
             socket.off('pointsAwarded', onPointsAwarded);
@@ -284,148 +356,185 @@ const Dashboard = () => {
         return { color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.12)' };
     };
 
-    const handleGeneratePDF = (mode = 'download') => {
-        const doc = new jsPDF();
-        let yPos = 20;
-
-        const checkPage = (height) => {
-            if (yPos + height > 280) {
-                doc.addPage();
-                yPos = 20;
-                addWatermark();
-            }
+    const handleGeneratePDF = async (mode = 'download') => {
+        const loadImage = (url) => {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    resolve(canvas.toDataURL('image/jpeg'));
+                };
+                img.onerror = () => resolve(null);
+                img.src = url;
+            });
         };
+
+        const rgmLogo = await loadImage('/logos/rgm-logo.jpeg');
+        const rippleLogo = await loadImage('/logos/ripple-logo.png');
+
+        const doc = new jsPDF();
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const margin = 15;
+        let yPos = margin;
+        let pageNum = 1;
 
         const addWatermark = () => {
             doc.setTextColor(230, 230, 230);
             doc.setFontSize(50);
             doc.setFont('times', 'italic');
-            doc.text(`${user?.regNo}`, 35, 150, { angle: 45 });
-            doc.setTextColor(0, 0, 0); // reset
+            doc.text(user?.regNo || 'RGMCSE', pageWidth / 2, pageHeight / 2, { angle: 45, align: 'center' });
+            doc.setTextColor(0, 0, 0);
+        };
+
+        const addFooter = () => {
+            doc.setFontSize(8);
+            doc.setTextColor(150, 150, 150);
+            doc.setFont('times', 'normal');
+            doc.text(`Page ${pageNum}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+            doc.text('RGMCSE COMPILER', pageWidth - margin, pageHeight - 10, { align: 'right' });
+            doc.setTextColor(0, 0, 0);
         };
 
         addWatermark();
+        addFooter();
 
-        // 1. College Name
-        doc.setFont('times', 'bold');
+        // Header with logos
+        const logoSize = 30;
+        if (rgmLogo) {
+            doc.addImage(rgmLogo, 'JPEG', margin, margin, logoSize, logoSize);
+        }
+        if (rippleLogo) {
+            doc.addImage(rippleLogo, 'PNG', pageWidth - margin - logoSize, margin, logoSize, logoSize);
+        }
+
+        // Title centered between logos
         doc.setFontSize(16);
-        doc.text(user?.collegeName || 'Rajeev Gandhi Memorial College Of Engineering', 105, yPos, { align: 'center' });
+        doc.setFont('times', 'bold');
+        doc.text('RGMCSE COMPILER', pageWidth / 2, margin + logoSize / 2 + 2, { align: 'center' });
+
+        // Separator line
+        yPos = margin + logoSize + 8;
+        doc.setDrawColor(200, 200, 200);
+        doc.line(margin, yPos, pageWidth - margin, yPos);
+        yPos += 8;
+
+        // Student Details section
+        doc.setFontSize(12);
+        doc.setFont('times', 'bold');
+        doc.text('Student Details', margin, yPos);
+        yPos += 8;
+
+        doc.setFontSize(10);
+        doc.setFont('times', 'normal');
+        const details = [
+            `Student Name: ${user?.name || 'N/A'}`,
+            `Registration Number: ${user?.regNo || 'N/A'}`,
+            `Year: ${user?.year || user?.classAndYear || 'N/A'}`,
+            `Branch: ${user?.branch || 'CSE'}`,
+            `Lab Name: ${user?.selectedLab || 'Unknown Lab'}`,
+            `Faculty Name: ${user?.facultyName || 'Unknown Faculty'}`
+        ];
+        details.forEach(d => {
+            doc.text(d, margin + 3, yPos);
+            yPos += 5;
+        });
         yPos += 10;
 
-        // 2. Department Name
-        doc.setFontSize(14);
-        doc.text('Department Of Computer Science and Engineering', 105, yPos, { align: 'center' });
-        yPos += 20;
-
-        // 3. Student Details
-        doc.setFont('times', 'normal');
-        doc.setFontSize(10);
-        doc.text(`Student Name: ${user?.name}`, 20, yPos);
-        yPos += 8;
-        doc.text(`Registration Number: ${user?.regNo}`, 20, yPos);
-        yPos += 8;
-        doc.text(`Branch & Section: ${user?.branch || 'CSE'} - ${user?.section || 'A'}`, 20, yPos);
-        yPos += 8;
-
-        // 4. Lab Name
-        doc.text(`Subject/Lab Name: ${user?.selectedLab || 'Unknown Lab'}`, 20, yPos);
-        yPos += 20;
-
-        // 6. All Weeks Programs
+        // All Weeks Programs (one per page)
         weeklyTasks.forEach(task => {
             if (!task.isUnlocked) return;
             task.questions?.forEach(q => {
-                const pLang = q.primaryLanguage || 'C'; // Fallback to 'C'
-                
-                // Find ONLY the submission that matches the primary language and is accepted
+                const pLang = q.primaryLanguage || 'C';
                 const acceptedSub = submissions.find(s => 
                     ((s.question?._id || s.question) === q._id || (s.question?._id || s.question) === q._id?.toString()) && 
                     s.status === 'Accepted' && 
                     s.language?.toLowerCase() === pLang?.toLowerCase()
                 );
 
-                if (!acceptedSub) return; // Only include solved questions in primary language
+                if (!acceptedSub) return;
 
-                doc.addPage();
-                yPos = 20;
-                addWatermark();
-                
-                doc.setFont('times', 'bold');
-                doc.setFontSize(10);
-                doc.text(`Week ${task.weekNumber}: ${q.title}`, 20, yPos);
-                yPos += 10;
-
-                if (q.description) {
-                    checkPage(15);
-                    doc.setFont('times', 'bold');
-                    doc.text('Problem Statement:', 20, yPos);
-                    yPos += 7;
-                    doc.setFont('times', 'normal');
-                    
-                    const splitDesc = doc.splitTextToSize(q.description.replace(/\n/g, ' '), 170);
-                    splitDesc.forEach(line => {
-                        checkPage(7);
-                        doc.text(line, 20, yPos);
-                        yPos += 7;
-                    });
-                    yPos += 5;
+                if (yPos > pageHeight - 35) {
+                    addFooter();
+                    doc.addPage();
+                    pageNum++;
+                    yPos = margin;
+                    addWatermark();
+                    addFooter();
                 }
+
+                doc.setFont('times', 'bold');
+                doc.setFontSize(12);
+                doc.text(`Question: ${q.title}`, margin, yPos);
+                yPos += 8;
+
+                doc.setFontSize(10);
 
                 if (q.sampleTestCases && q.sampleTestCases.length > 0) {
-                    checkPage(15);
                     doc.setFont('times', 'bold');
-                    doc.text('Input:', 20, yPos);
-                    yPos += 7;
-                    doc.setFont('times', 'normal');
-                    const splitInput = doc.splitTextToSize(q.sampleTestCases[0].input || 'None', 170);
-                    splitInput.forEach(line => { checkPage(7); doc.text(line, 20, yPos); yPos += 7; });
+                    doc.text('Input:', margin + 2, yPos);
                     yPos += 5;
-
-                    checkPage(15);
-                    doc.setFont('times', 'bold');
-                    doc.text('Output:', 20, yPos);
-                    yPos += 7;
                     doc.setFont('times', 'normal');
-                    const splitOutput = doc.splitTextToSize(q.sampleTestCases[0].output || 'None', 170);
-                    splitOutput.forEach(line => { checkPage(7); doc.text(line, 20, yPos); yPos += 7; });
-                    yPos += 10;
+                    const splitInput = doc.splitTextToSize(q.sampleTestCases[0].input || 'None', pageWidth - 40);
+                    doc.text(splitInput, margin + 5, yPos);
+                    yPos += splitInput.length * 4 + 3;
+
+                    if (yPos > pageHeight - 35) {
+                        addFooter();
+                        doc.addPage();
+                        pageNum++;
+                        yPos = margin;
+                        addWatermark();
+                        addFooter();
+                    }
+
+                    doc.setFont('times', 'bold');
+                    doc.text('Output:', margin + 2, yPos);
+                    yPos += 5;
+                    doc.setFont('times', 'normal');
+                    const splitOutput = doc.splitTextToSize(q.sampleTestCases[0].output || 'None', pageWidth - 40);
+                    doc.text(splitOutput, margin + 5, yPos);
+                    yPos += splitOutput.length * 4 + 5;
                 }
 
-                checkPage(20);
+                if (yPos > pageHeight - 35) {
+                    addFooter();
+                    doc.addPage();
+                    pageNum++;
+                    yPos = margin;
+                    addWatermark();
+                    addFooter();
+                }
+
                 doc.setFont('times', 'bold');
-                doc.text(`Student Code (${acceptedSub.language}):`, 20, yPos);
-                yPos += 7;
-                
-                doc.setFont('times', 'normal');
+                doc.text(`Student Code (${acceptedSub.language}):`, margin, yPos);
+                yPos += 6;
+
+                doc.setFont('courier');
+                doc.setFontSize(8);
                 const codeLines = (acceptedSub.code || '').split('\n');
                 codeLines.forEach(line => {
-                    checkPage(5);
-                    const splitCode = doc.splitTextToSize(line, 170);
-                    splitCode.forEach(cLine => {
-                        checkPage(5);
-                        doc.text(cLine, 20, yPos);
-                        yPos += 5;
-                    });
+                    if (yPos > pageHeight - 20) {
+                        addFooter();
+                        doc.addPage();
+                        pageNum++;
+                        yPos = margin;
+                        addWatermark();
+                        addFooter();
+                    }
+                    const splitCode = doc.splitTextToSize(line, pageWidth - 30);
+                    doc.text(splitCode, margin + 2, yPos);
+                    yPos += splitCode.length * 3.5;
                 });
             });
         });
 
-        // 7. Final Completion Page
-        doc.addPage();
-        addWatermark();
-        yPos = 120;
-        doc.setFont('times', 'bold');
-        doc.setFontSize(24);
-        doc.text('LAB COURSE COMPLETED', 105, yPos, { align: 'center' });
-        yPos += 20;
-        doc.setFontSize(14);
-        doc.setFont('times', 'normal');
-        doc.text(`Congratulations ${user?.name},`, 105, yPos, { align: 'center' });
-        yPos += 10;
-        doc.text(`you have successfully completed all assignments for`, 105, yPos, { align: 'center' });
-        yPos += 10;
-        doc.setFont('times', 'bold');
-        doc.text(`${user?.selectedLab || 'the lab'}.`, 105, yPos, { align: 'center' });
+        addFooter();
 
         if (mode === 'preview') {
             const pdfBlob = doc.output('blob');
@@ -435,6 +544,33 @@ const Dashboard = () => {
             doc.save(`${user?.regNo}_${user?.selectedLab || 'Lab'}_Record.pdf`);
         }
     };
+
+    if (isLoading) {
+        return (
+            <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', textAlign: 'center', paddingTop: '10vh' }}>
+                <PremiumHeader />
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
+                    <div className="spinner" style={{ border: '4px solid rgba(255,255,255,0.1)', borderTop: '4px solid var(--primary)', borderRadius: '50%', width: '40px', height: '40px', animation: 'spin 1s linear infinite' }} />
+                    <h2 style={{ color: 'var(--text)' }}>Loading Dashboard...</h2>
+                </div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', textAlign: 'center', paddingTop: '10vh' }}>
+                <PremiumHeader />
+                <div className="card" style={{ display: 'inline-block', padding: '2rem 3rem' }}>
+                    <h2 style={{ color: '#ef4444', marginBottom: '1rem' }}>Failed to Load Dashboard</h2>
+                    <p style={{ color: 'gray', marginBottom: '1.5rem' }}>{error}</p>
+                    <button onClick={fetchTasks} className="btn btn-primary" style={{ padding: '10px 20px', fontWeight: 'bold' }}>
+                        Retry Connection
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
@@ -566,6 +702,37 @@ const Dashboard = () => {
                         <p style={{ color: 'gray', margin: 0, fontSize: '0.9rem', fontWeight: '500' }}>Latest unlocked week</p>
                     </div>
                 </motion.div>
+                {/* Active Lab Info Card */}
+                {user?.selectedLab && (
+                    <motion.div
+                        whileHover={{ y: -5 }}
+                        className="card"
+                        style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '1.2rem',
+                            background: 'rgba(52, 211, 153, 0.06)',
+                            backdropFilter: 'blur(10px)',
+                            border: '1px solid rgba(52, 211, 153, 0.2)',
+                            boxShadow: '0 0 20px rgba(52, 211, 153, 0.05)',
+                        }}
+                    >
+                        <div style={{ padding: '15px', borderRadius: '12px', background: 'rgba(52, 211, 153, 0.12)', color: '#34d399' }}>
+                            <Layers size={28} />
+                        </div>
+                        <div>
+                            <h3 style={{ fontSize: '1.3rem', margin: 0, color: '#34d399' }}>{user.selectedLab}</h3>
+                            <p style={{ color: '#d6d6d6', margin: '2px 0 0', fontSize: '0.82rem', fontWeight: 500 }}>
+                                {user.facultyName || 'Faculty'} · Active Lab
+                            </p>
+                            {user.semester && (
+                                <p style={{ color: 'gray', margin: '2px 0 0', fontSize: '0.72rem' }}>
+                                    Semester {user.semester}
+                                </p>
+                            )}
+                        </div>
+                    </motion.div>
+                )}
             </div>
 
             <div
@@ -849,6 +1016,16 @@ const Dashboard = () => {
                         </div>
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
+                            {weeklyTasks.length === 0 && (
+                                <div style={{ padding: '3rem 2rem', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: '1rem', border: '1px dashed rgba(255,255,255,0.1)' }}>
+                                    <p style={{ color: '#999', fontSize: '1.1rem', fontWeight: 500 }}>
+                                        No active questions published for your lab.
+                                    </p>
+                                    <p style={{ color: '#666', fontSize: '0.85rem', marginTop: '0.5rem' }}>
+                                        Published questions will appear here. Contact your faculty if you believe this is an error.
+                                    </p>
+                                </div>
+                            )}
                             {weeklyTasks.map((task) => (
                                 <div key={task._id}>
                                     <h3 style={{ marginBottom: '1.2rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
@@ -1002,21 +1179,24 @@ const Dashboard = () => {
                                                 )}
                                             </motion.div>
                                         ))}
-                                        {(!task.questions || task.questions.length === 0) && (
-                                            <div
-                                                style={{
-                                                    padding: '2rem',
-                                                    textAlign: 'center',
-                                                    background: 'var(--surface)',
-                                                    border: '1px dashed var(--border)',
-                                                    borderRadius: '1rem',
-                                                }}
-                                            >
-                                                <p style={{ color: 'gray', fontStyle: 'italic', fontSize: '0.95rem' }}>
-                                                    No challenges assigned to this week yet.
-                                                </p>
-                                            </div>
-                                        )}
+                                            {(!task.questions || task.questions.length === 0) && (
+                                                <div
+                                                    style={{
+                                                        padding: '2rem',
+                                                        textAlign: 'center',
+                                                        background: 'var(--surface)',
+                                                        border: '1px dashed var(--border)',
+                                                        borderRadius: '1rem',
+                                                    }}
+                                                >
+                                                    <p style={{ color: 'gray', fontStyle: 'italic', fontSize: '0.95rem' }}>
+                                                        No questions published for this week yet.
+                                                    </p>
+                                                    <p style={{ color: '#666', fontSize: '0.8rem', marginTop: '0.5rem' }}>
+                                                        Check back when your faculty publishes new questions.
+                                                    </p>
+                                                </div>
+                                            )}
                                     </div>
                                 </div>
                             ))}
@@ -1028,6 +1208,46 @@ const Dashboard = () => {
                             <History size={22} style={{ color: 'var(--primary)' }} />
                             Submission history
                         </h2>
+                        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <div style={{ position: 'relative', flex: '1 1 240px' }}>
+                                <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#555', pointerEvents: 'none' }} />
+                                <input
+                                    type="text"
+                                    value={submissionFilter.search}
+                                    onChange={(e) => setSubmissionFilter(prev => ({ ...prev, search: e.target.value }))}
+                                    placeholder="Filter by problem name..."
+                                    style={{
+                                        width: '100%', padding: '8px 10px 8px 30px', borderRadius: '8px', fontSize: '0.8rem',
+                                        border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)',
+                                        color: '#e0e0e0', outline: 'none',
+                                    }}
+                                />
+                            </div>
+                            <select
+                                value={submissionFilter.status}
+                                onChange={(e) => setSubmissionFilter(prev => ({ ...prev, status: e.target.value }))}
+                                style={{
+                                    padding: '8px 12px', borderRadius: '8px', fontSize: '0.8rem',
+                                    border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)',
+                                    color: '#ccc', outline: 'none', cursor: 'pointer',
+                                }}
+                            >
+                                <option value="">All Status</option>
+                                <option value="Accepted">Accepted</option>
+                                <option value="Wrong Answer">Wrong Answer</option>
+                                <option value="Runtime Error">Runtime Error</option>
+                                <option value="Compilation Error">Compilation Error</option>
+                                <option value="TLE">Time Limit Exceeded</option>
+                                <option value="Pending">Pending</option>
+                            </select>
+                            <span style={{ fontSize: '0.75rem', color: '#888' }}>
+                                {submissions.filter(s => {
+                                    if (submissionFilter.search && !s.question?.title?.toLowerCase().includes(submissionFilter.search.toLowerCase())) return false;
+                                    if (submissionFilter.status && s.status !== submissionFilter.status) return false;
+                                    return true;
+                                }).length} results
+                            </span>
+                        </div>
                         <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: 'gray' }}>Your recent runs in this course (newest first)</p>
                         <div style={{ overflowX: 'auto' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
@@ -1041,14 +1261,22 @@ const Dashboard = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {submissions.length === 0 && (
+                                    {submissions.filter(s => {
+                                        if (submissionFilter.search && !s.question?.title?.toLowerCase().includes(submissionFilter.search.toLowerCase())) return false;
+                                        if (submissionFilter.status && s.status !== submissionFilter.status) return false;
+                                        return true;
+                                    }).length === 0 && (
                                         <tr>
                                             <td colSpan={5} style={{ padding: '1.5rem', color: 'gray' }}>
-                                                No submissions yet. Open a weekly task and submit your first solution.
+                                                No submissions match your filters.
                                             </td>
                                         </tr>
                                     )}
-                                    {submissions.map((s) => {
+                                    {submissions.filter(s => {
+                                        if (submissionFilter.search && !s.question?.title?.toLowerCase().includes(submissionFilter.search.toLowerCase())) return false;
+                                        if (submissionFilter.status && s.status !== submissionFilter.status) return false;
+                                        return true;
+                                    }).map((s) => {
                                         const st = statusStyle(s.status);
                                         const qid = s.question?._id || s.question;
                                         return (

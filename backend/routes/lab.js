@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const Question = require('../models/Question');
+const { questions } = require('../config/dbHelper');
 const moment = require('moment-timezone');
 
 // @route   GET api/lab/status
@@ -12,12 +12,17 @@ router.get('/status', async (req, res) => {
             return res.status(400).json({ message: 'questionId is required' });
         }
 
-        const question = await Question.findById(questionId);
-        if (!question) {
+        const qDoc = await questions.doc(questionId).get();
+        if (!qDoc.exists) {
             return res.status(404).json({ message: 'Question not found' });
         }
 
+        const question = qDoc.data();
         let isOpen = true;
+
+        // Firebase timestamps need to be converted to JS dates using .toDate() if stored as Timestamp
+        const unlockStart = question.unlockStartTime && question.unlockStartTime.toDate ? question.unlockStartTime.toDate() : new Date(question.unlockStartTime);
+        const unlockEnd = question.unlockEndTime && question.unlockEndTime.toDate ? question.unlockEndTime.toDate() : new Date(question.unlockEndTime);
 
         if (question.unlockStartTime && question.unlockEndTime) {
             const currentTime = new Date(
@@ -27,8 +32,8 @@ router.get('/status', async (req, res) => {
             );
 
             isOpen =
-                currentTime >= new Date(question.unlockStartTime) &&
-                currentTime <= new Date(question.unlockEndTime);
+                currentTime >= unlockStart &&
+                currentTime <= unlockEnd;
         }
 
         res.json({ isOpen });

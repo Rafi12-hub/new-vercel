@@ -139,12 +139,12 @@ const PremiumHeader = () => {
                 <div className="premium-header-user-meta" style={{ textAlign: 'right' }}>
                     <p style={{ margin: 0, fontWeight: 'bold', color: 'var(--text)' }}>{user?.name || user?.email}</p>
                     <p style={{ margin: 0, fontSize: '0.8rem', color: 'gray' }}>
-                        {user?.role === 'superadmin'
-                            ? 'Super Admin (HOD)'
-                            : user?.role === 'labadmin'
-                              ? 'Lab Admin'
-                              : user?.role === 'admin'
-                                ? 'Faculty / Admin'
+                        {user?.role === 'hod'
+                            ? 'HOD'
+                            : user?.role === 'faculty'
+                              ? 'Faculty'
+                              : user?.role === 'labadmin'
+                                ? 'Lab Admin'
                                 : 'Student'}
                     </p>
                 </div>

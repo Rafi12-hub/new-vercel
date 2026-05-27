@@ -16,11 +16,16 @@ import {
     AlertTriangle,
     UserX,
     Clock,
+    Search,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
 import PremiumHeader from '../components/PremiumHeader';
+import AdvancedFilterPanel from '../components/AdvancedFilterPanel';
+
+const LABS = ["Data Structures Lab", "C", "DS", "ADSAA", "JAVA", "PYTHON", "DBMS", "OS", "CN", "AI", "ML", "FSAD"];
+const LANGUAGES = ['C', 'C++', 'Java', 'Python', 'JavaScript'];
 
 const socket = io('http://localhost:5000');
 
@@ -57,6 +62,7 @@ const LabAdminDashboard = () => {
         tags: '',
         unlockDate: '',
         deadlineDate: '',
+        basePoints: 100,
     });
     const [violationForm, setViolationForm] = useState({
         studentId: '',
@@ -67,13 +73,21 @@ const LabAdminDashboard = () => {
     const [unlockForm, setUnlockForm] = useState({ weeklyUnlockDay: 'Monday', weeklyUnlockTime: '10:30' });
     const [toast, setToast] = useState(null);
 
-    const fetchDashboardData = useCallback(async () => {
+    // Advanced filter state
+    const [advancedFilters, setAdvancedFilters] = useState({ search: '', year: '', section: '', branch: '', lab: '', language: '', timeSolved: '', timeSolvedOrder: '', languageProficiency: '', solvedFilter: '', solvedOrder: '', pointsFilter: '', pointsOrder: '', accuracyFilter: '', accuracyValue: '', consistencyFilter: '', page: 1, limit: 50 });
+    const [filteredResults, setFilteredResults] = useState(null);
+    const [filterLoading, setFilterLoading] = useState(false);
+
+    const fetchDashboardData = useCallback(async (isSilent = false) => {
         if (!user || user.role !== 'labadmin') return;
-        setIsLoading(true);
+        if (!isSilent && !stats) setIsLoading(true);
         setError(null);
         try {
             const token = localStorage.getItem('token');
             const headers = { 'x-auth-token': token };
+            
+            await axios.get('http://localhost:5000/api/lab-admin/dashboard', { headers });
+
             const [statsRes, studentsRes, questionsRes, violRes] = await Promise.all([
                 axios.get('http://localhost:5000/api/admin/stats', { headers }),
                 axios.get('http://localhost:5000/api/admin/students', { headers }),
@@ -86,11 +100,47 @@ const LabAdminDashboard = () => {
             setViolations(violRes.data);
         } catch (err) {
             console.error(err);
-            setError(err.response?.data?.message || err.message || 'Failed to load');
+            if (err.code === 'ERR_NETWORK') {
+                setError("Network error: Cannot connect to the server. Please ensure the backend is running on port 5000.");
+            } else {
+                setError(`Failed to load dashboard data: ${err.response?.data?.message || err.message}`);
+            }
         } finally {
             setIsLoading(false);
         }
-    }, [user]);
+    }, [user, stats]);
+
+    const fetchAdvancedFilteredData = useCallback(async (filters) => {
+        setFilterLoading(true);
+        try {
+            const token = localStorage.getItem('token');
+            const params = { ...filters };
+            Object.keys(params).forEach(k => { if (!params[k]) delete params[k]; });
+            const res = await axios.get('http://localhost:5000/api/analytics/advanced', { params, headers: { 'x-auth-token': token } });
+            setFilteredResults(res.data);
+        } catch (err) {
+            console.error('Advanced filter error:', err);
+        } finally {
+            setFilterLoading(false);
+        }
+    }, []);
+
+    const handleFilterChange = (newFilters) => {
+        setAdvancedFilters(newFilters);
+        fetchAdvancedFilteredData(newFilters);
+    };
+
+    const handleResetFilters = () => {
+        const reset = { search: '', year: '', section: '', branch: '', lab: '', language: '', timeSolved: '', timeSolvedOrder: '', languageProficiency: '', solvedFilter: '', solvedOrder: '', pointsFilter: '', pointsOrder: '', accuracyFilter: '', accuracyValue: '', consistencyFilter: '', page: 1, limit: 50 };
+        setAdvancedFilters(reset);
+        fetchAdvancedFilteredData(reset);
+    };
+
+    const handleSearch = (query) => {
+        const updated = { ...advancedFilters, search: query, page: 1 };
+        setAdvancedFilters(updated);
+        fetchAdvancedFilteredData(updated);
+    };
 
     useEffect(() => {
         if (!user) {
@@ -99,13 +149,13 @@ const LabAdminDashboard = () => {
         }
         if (user.role !== 'labadmin') {
             if (user.role === 'student') navigate('/dashboard', { replace: true });
-            else if (user.role === 'superadmin') navigate('/super-admin', { replace: true });
-            else if (user.role === 'admin') navigate('/admin', { replace: true });
+            else if (user.role === 'hod' || user.role === 'faculty') navigate('/admin', { replace: true });
             else navigate('/login', { replace: true });
             return;
         }
         const t = window.setTimeout(() => {
             void fetchDashboardData();
+            void fetchAdvancedFilteredData(advancedFilters);
         }, 0);
         const handleViolationAlert = (report) => {
             if (user?.assignedLab && report.labName === user.assignedLab) {
@@ -115,19 +165,19 @@ const LabAdminDashboard = () => {
             }
         };
 
-        socket.on('submissionAdded', fetchDashboardData);
-        socket.on('progressUpdated', fetchDashboardData);
-        socket.on('questionAdded', fetchDashboardData);
-        socket.on('questionDeleted', fetchDashboardData);
-        socket.on('weekUnlocked', fetchDashboardData);
+        socket.on('submissionAdded', () => fetchDashboardData(true));
+        socket.on('progressUpdated', () => fetchDashboardData(true));
+        socket.on('questionAdded', () => fetchDashboardData(true));
+        socket.on('questionDeleted', () => fetchDashboardData(true));
+        socket.on('weekUnlocked', () => fetchDashboardData(true));
         socket.on('violationAlert', handleViolationAlert);
         return () => {
             window.clearTimeout(t);
-            socket.off('submissionAdded', fetchDashboardData);
-            socket.off('progressUpdated', fetchDashboardData);
-            socket.off('questionAdded', fetchDashboardData);
-            socket.off('questionDeleted', fetchDashboardData);
-            socket.off('weekUnlocked', fetchDashboardData);
+            socket.off('submissionAdded');
+            socket.off('progressUpdated');
+            socket.off('questionAdded');
+            socket.off('questionDeleted');
+            socket.off('weekUnlocked');
             socket.off('violationAlert', handleViolationAlert);
         };
     }, [user, navigate, fetchDashboardData]);
@@ -191,7 +241,8 @@ const LabAdminDashboard = () => {
                 tags: questionForm.tags,
                 unlockStartTime: questionForm.unlockDate,
                 unlockEndTime: questionForm.deadlineDate,
-                labName: lab
+                labName: lab,
+                basePoints: Number(questionForm.basePoints) || 100
             };
             
             if (isEditing) {
@@ -229,6 +280,7 @@ const LabAdminDashboard = () => {
                 tags: '',
                 unlockDate: '',
                 deadlineDate: '',
+                basePoints: 100,
             });
             setIsEditing(false);
             fetchDashboardData();
@@ -305,11 +357,11 @@ const LabAdminDashboard = () => {
 
     if (isLoading && !stats) {
         return (
-            <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
+            <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', textAlign: 'center', paddingTop: '10vh' }}>
                 <PremiumHeader />
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center', marginTop: '4rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1rem' }}>
                     <RefreshCw size={40} className="spin text-primary" />
-                    <p style={{ color: 'gray' }}>Loading lab dashboard…</p>
+                    <h2 style={{ color: 'var(--text)' }}>Loading Dashboard...</h2>
                 </div>
             </div>
         );
@@ -317,13 +369,14 @@ const LabAdminDashboard = () => {
 
     if (error && !stats) {
         return (
-            <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto' }}>
+            <div style={{ padding: '2rem', maxWidth: '1400px', margin: '0 auto', textAlign: 'center', paddingTop: '10vh' }}>
                 <PremiumHeader />
-                <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
-                    <AlertCircle size={40} color="#ef4444" />
-                    <p style={{ color: '#ef4444', marginTop: '1rem' }}>{error}</p>
-                    <button type="button" className="btn btn-primary" style={{ marginTop: '1rem' }} onClick={() => fetchDashboardData()}>
-                        Retry
+                <div className="card" style={{ display: 'inline-block', padding: '2rem 3rem' }}>
+                    <AlertCircle size={48} color="#ef4444" style={{ marginBottom: '1rem' }} />
+                    <h2 style={{ color: '#ef4444', marginBottom: '1rem' }}>Failed to Load Dashboard</h2>
+                    <p style={{ color: 'gray', marginBottom: '1.5rem' }}>{error || "No data available"}</p>
+                    <button type="button" className="btn btn-primary" style={{ padding: '10px 20px', fontWeight: 'bold' }} onClick={() => fetchDashboardData()}>
+                        <RefreshCw size={18} style={{ marginRight: '8px' }} /> Retry Connection
                     </button>
                 </div>
             </div>
@@ -418,247 +471,382 @@ const LabAdminDashboard = () => {
             </div>
 
             {activeTab === 'questions' && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
-                    <div className="card" style={{ padding: '1.5rem' }}>
-                        <h2 style={{ marginTop: 0 }}>{isEditing ? 'Edit question' : 'Add question'}</h2>
-                        <form onSubmit={handleQuestionSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                        <div style={{ position: 'relative', flex: '1 1 280px' }}>
                             <input
-                                className="glass"
-                                placeholder="Title"
-                                value={questionForm.title}
-                                onChange={(e) => setQuestionForm({ ...questionForm, title: e.target.value })}
-                                required
-                                style={{ padding: '10px' }}
+                                type="text"
+                                placeholder="Search questions by title, lab, difficulty..."
+                                value={advancedFilters.search}
+                                onChange={(e) => {
+                                    const val = e.target.value;
+                                    const updated = { ...advancedFilters, search: val, page: 1 };
+                                    setAdvancedFilters(updated);
+                                    fetchAdvancedFilteredData(updated);
+                                }}
+                                style={{
+                                    width: '100%', padding: '10px 14px 10px 36px', borderRadius: '10px',
+                                    fontSize: '0.85rem', border: '1px solid rgba(255,255,255,0.08)',
+                                    background: 'rgba(255,255,255,0.04)', color: '#e0e0e0', outline: 'none',
+                                }}
                             />
-                            <textarea
-                                className="glass"
-                                placeholder="Description"
-                                value={questionForm.description}
-                                onChange={(e) => setQuestionForm({ ...questionForm, description: e.target.value })}
-                                required
-                                style={{ padding: '10px', minHeight: '80px' }}
-                            />
-                            <input
-                                className="glass"
-                                placeholder="Input format"
-                                value={questionForm.inputFormat}
-                                onChange={(e) => setQuestionForm({ ...questionForm, inputFormat: e.target.value })}
-                                required
-                                style={{ padding: '10px' }}
-                            />
-                            <input
-                                className="glass"
-                                placeholder="Output format"
-                                value={questionForm.outputFormat}
-                                onChange={(e) => setQuestionForm({ ...questionForm, outputFormat: e.target.value })}
-                                required
-                                style={{ padding: '10px' }}
-                            />
-                            <input
-                                className="glass"
-                                placeholder="Constraints"
-                                value={questionForm.constraints}
-                                onChange={(e) => setQuestionForm({ ...questionForm, constraints: e.target.value })}
-                                required
-                                style={{ padding: '10px' }}
-                            />
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                                <textarea
+                            <Search size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#666', pointerEvents: 'none' }} />
+                        </div>
+                        <select
+                            value={advancedFilters.lab || ''}
+                            onChange={(e) => {
+                                const updated = { ...advancedFilters, lab: e.target.value, page: 1 };
+                                setAdvancedFilters(updated);
+                                fetchAdvancedFilteredData(updated);
+                            }}
+                            style={{
+                                padding: '10px 14px', borderRadius: '10px', fontSize: '0.8rem',
+                                border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)',
+                                color: '#ccc', outline: 'none', cursor: 'pointer',
+                            }}
+                        >
+                            <option value="">All Labs</option>
+                            {LABS.map(l => <option key={l} value={l}>{l}</option>)}
+                        </select>
+                        <select
+                            value={advancedFilters.language || ''}
+                            onChange={(e) => {
+                                const updated = { ...advancedFilters, language: e.target.value, page: 1 };
+                                setAdvancedFilters(updated);
+                                fetchAdvancedFilteredData(updated);
+                            }}
+                            style={{
+                                padding: '10px 14px', borderRadius: '10px', fontSize: '0.8rem',
+                                border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)',
+                                color: '#ccc', outline: 'none', cursor: 'pointer',
+                            }}
+                        >
+                            <option value="">All Languages</option>
+                            {LANGUAGES.map(l => <option key={l} value={l}>{l}</option>)}
+                        </select>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.5rem' }}>
+                        <div className="card" style={{ padding: '1.5rem' }}>
+                            <h2 style={{ marginTop: 0 }}>{isEditing ? 'Edit question' : 'Add question'}</h2>
+                            <form onSubmit={handleQuestionSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                <input
                                     className="glass"
-                                    placeholder="Sample input"
-                                    value={questionForm.sampleInput}
-                                    onChange={(e) => setQuestionForm({ ...questionForm, sampleInput: e.target.value })}
-                                    style={{ padding: '10px' }}
-                                />
-                                <textarea
-                                    className="glass"
-                                    placeholder="Sample output"
-                                    value={questionForm.sampleOutput}
-                                    onChange={(e) => setQuestionForm({ ...questionForm, sampleOutput: e.target.value })}
-                                    style={{ padding: '10px' }}
-                                />
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                                <textarea
-                                    className="glass"
-                                    placeholder="Hidden input"
-                                    value={questionForm.hiddenInput}
-                                    onChange={(e) => setQuestionForm({ ...questionForm, hiddenInput: e.target.value })}
-                                    style={{ padding: '10px' }}
-                                />
-                                <textarea
-                                    className="glass"
-                                    placeholder="Hidden output"
-                                    value={questionForm.hiddenOutput}
-                                    onChange={(e) => setQuestionForm({ ...questionForm, hiddenOutput: e.target.value })}
-                                    style={{ padding: '10px' }}
-                                />
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                                <select
-                                    className="glass"
-                                    value={questionForm.difficulty}
-                                    onChange={(e) => setQuestionForm({ ...questionForm, difficulty: e.target.value })}
-                                    style={{ padding: '10px' }}
-                                >
-                                    <option value="Easy">Easy</option>
-                                    <option value="Medium">Medium</option>
-                                    <option value="Hard">Hard</option>
-                                </select>
-                                <select
-                                    className="glass"
-                                    value={questionForm.primaryLanguage}
-                                    onChange={(e) => setQuestionForm({ ...questionForm, primaryLanguage: e.target.value })}
-                                    style={{ padding: '10px' }}
+                                    placeholder="Title"
+                                    value={questionForm.title}
+                                    onChange={(e) => setQuestionForm({ ...questionForm, title: e.target.value })}
                                     required
-                                >
-                                    <option value="" disabled>Select Primary Language</option>
-                                    <option value="C">C</option>
-                                    <option value="C++">C++</option>
-                                    <option value="Java">Java</option>
-                                    <option value="Python">Python</option>
-                                </select>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem', alignItems: 'center' }}>
-                                    <input
+                                    style={{ padding: '10px' }}
+                                />
+                                <textarea
+                                    className="glass"
+                                    placeholder="Description"
+                                    value={questionForm.description}
+                                    onChange={(e) => setQuestionForm({ ...questionForm, description: e.target.value })}
+                                    required
+                                    style={{ padding: '10px', minHeight: '80px' }}
+                                />
+                                <input
+                                    className="glass"
+                                    placeholder="Input format"
+                                    value={questionForm.inputFormat}
+                                    onChange={(e) => setQuestionForm({ ...questionForm, inputFormat: e.target.value })}
+                                    required
+                                    style={{ padding: '10px' }}
+                                />
+                                <input
+                                    className="glass"
+                                    placeholder="Output format"
+                                    value={questionForm.outputFormat}
+                                    onChange={(e) => setQuestionForm({ ...questionForm, outputFormat: e.target.value })}
+                                    required
+                                    style={{ padding: '10px' }}
+                                />
+                                <input
+                                    className="glass"
+                                    placeholder="Constraints"
+                                    value={questionForm.constraints}
+                                    onChange={(e) => setQuestionForm({ ...questionForm, constraints: e.target.value })}
+                                    required
+                                    style={{ padding: '10px' }}
+                                />
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                    <textarea
                                         className="glass"
-                                        type="number"
-                                        placeholder="Week #"
-                                        value={questionForm.weekNumber}
-                                        onChange={(e) => setQuestionForm({ ...questionForm, weekNumber: e.target.value })}
+                                        placeholder="Sample input"
+                                        value={questionForm.sampleInput}
+                                        onChange={(e) => setQuestionForm({ ...questionForm, sampleInput: e.target.value })}
+                                        style={{ padding: '10px' }}
+                                    />
+                                    <textarea
+                                        className="glass"
+                                        placeholder="Sample output"
+                                        value={questionForm.sampleOutput}
+                                        onChange={(e) => setQuestionForm({ ...questionForm, sampleOutput: e.target.value })}
                                         style={{ padding: '10px' }}
                                     />
                                 </div>
-                                <input
-                                    className="glass"
-                                    placeholder="Tags (comma)"
-                                    value={questionForm.tags}
-                                    onChange={(e) => setQuestionForm({ ...questionForm, tags: e.target.value })}
-                                    style={{ padding: '10px' }}
-                                />
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                                <input
-                                    type="datetime-local"
-                                    className="glass"
-                                    value={questionForm.unlockDate}
-                                    onChange={(e) => setQuestionForm({ ...questionForm, unlockDate: e.target.value })}
-                                    style={{ padding: '10px' }}
-                                />
-                                <input
-                                    type="datetime-local"
-                                    className="glass"
-                                    value={questionForm.deadlineDate}
-                                    onChange={(e) => setQuestionForm({ ...questionForm, deadlineDate: e.target.value })}
-                                    style={{ padding: '10px' }}
-                                />
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                    <textarea
+                                        className="glass"
+                                        placeholder="Hidden input"
+                                        value={questionForm.hiddenInput}
+                                        onChange={(e) => setQuestionForm({ ...questionForm, hiddenInput: e.target.value })}
+                                        style={{ padding: '10px' }}
+                                    />
+                                    <textarea
+                                        className="glass"
+                                        placeholder="Hidden output"
+                                        value={questionForm.hiddenOutput}
+                                        onChange={(e) => setQuestionForm({ ...questionForm, hiddenOutput: e.target.value })}
+                                        style={{ padding: '10px' }}
+                                    />
                                 </div>
-                            <div className="form-group" style={{ marginTop: '0.5rem' }}>
-                                <label style={{ fontSize: '0.85rem', color: '#d6d6d6', marginBottom: '0.3rem', display: 'block' }}>Is This Final Week?</label>
-                                <select 
-                                    className="glass" 
-                                    style={{ width: '100%', padding: '10px' }}
-                                    value={questionForm.isFinalWeek ? 'true' : 'false'} 
-                                    onChange={(e) => setQuestionForm({...questionForm, isFinalWeek: e.target.value === 'true'})}
-                                >
-                                    <option value="false">No</option>
-                                    <option value="true">Yes</option>
-                                </select>
-                            </div>
-                            <button type="submit" className="btn btn-primary">
-                                {isEditing ? 'Update' : 'Publish'}
-                            </button>
-                            {isEditing && (
-                                <button type="button" className="btn glass" onClick={() => setIsEditing(false)}>
-                                    Cancel
-                                </button>
-                            )}
-                        </form>
-                    </div>
-                    <div className="card" style={{ padding: '1.5rem', maxHeight: '720px', overflowY: 'auto' }}>
-                        <h3 style={{ marginTop: 0 }}>Existing questions</h3>
-                        {questions.map((q) => (
-                            <div
-                                key={q._id}
-                                className="card"
-                                style={{
-                                    marginBottom: '0.75rem',
-                                    padding: '0.75rem',
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
-                                    alignItems: 'center',
-                                    gap: '0.5rem',
-                                }}
-                            >
-                                <div>
-                                    <strong>{q.title}</strong>
-                                    <div style={{ fontSize: '0.8rem', color: 'gray' }}>
-                                        {q.difficulty} · Week linked via task
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                                    <select
+                                        className="glass"
+                                        value={questionForm.difficulty}
+                                        onChange={(e) => setQuestionForm({ ...questionForm, difficulty: e.target.value })}
+                                        style={{ padding: '10px' }}
+                                    >
+                                        <option value="Easy">Easy</option>
+                                        <option value="Medium">Medium</option>
+                                        <option value="Hard">Hard</option>
+                                    </select>
+                                    <select
+                                        className="glass"
+                                        value={questionForm.primaryLanguage}
+                                        onChange={(e) => setQuestionForm({ ...questionForm, primaryLanguage: e.target.value })}
+                                        style={{ padding: '10px' }}
+                                        required
+                                    >
+                                        <option value="" disabled>Select Primary Language</option>
+                                        <option value="C">C</option>
+                                        <option value="C++">C++</option>
+                                        <option value="Java">Java</option>
+                                        <option value="Python">Python</option>
+                                        <option value="JavaScript">JavaScript</option>
+                                    </select>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1rem', alignItems: 'center' }}>
+                                        <input
+                                            className="glass"
+                                            type="number"
+                                            placeholder="Week #"
+                                            value={questionForm.weekNumber}
+                                            onChange={(e) => setQuestionForm({ ...questionForm, weekNumber: e.target.value })}
+                                            style={{ padding: '10px' }}
+                                        />
                                     </div>
                                 </div>
-                                <div style={{ display: 'flex', gap: '0.35rem' }}>
-                                    <button
-                                        type="button"
-                                        className="btn glass"
-                                        onClick={() => {
-                                            setIsEditing(true);
-                                            setQuestionForm({
-                                                ...q,
-                                                sampleInput: q.sampleTestCases?.[0]?.input || '',
-                                                sampleOutput: q.sampleTestCases?.[0]?.output || '',
-                                                hiddenInput: q.hiddenTestCases?.[0]?.input || '',
-                                                hiddenOutput: q.hiddenTestCases?.[0]?.output || '',
-                                                primaryLanguage: q.primaryLanguage || 'C',
-                                                tags: q.tags?.join(', ') || '',
-                                                weekNumber: '',
-                                                isFinalWeek: false,
-                                                unlockDate: '',
-                                                deadlineDate: '',
-                                            });
-                                        }}
-                                    >
-                                        <Edit size={16} />
-                                    </button>
-                                    <button type="button" className="btn glass" style={{ color: '#ef4444' }} onClick={() => handleDeleteQuestion(q._id)}>
-                                        <Trash size={16} />
-                                    </button>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                    <div>
+                                        <label style={{ fontSize: '0.85rem', color: '#e7c965', marginBottom: '0.3rem', display: 'block', fontWeight: 600 }}>
+                                            Points Reward
+                                        </label>
+                                        <input
+                                            className="glass"
+                                            type="number"
+                                            placeholder="Points (e.g. 25)"
+                                            value={questionForm.basePoints}
+                                            onChange={(e) => setQuestionForm({ ...questionForm, basePoints: e.target.value })}
+                                            style={{ padding: '10px', width: '100%', boxSizing: 'border-box', border: '1px solid rgba(231, 201, 101, 0.3)' }}
+                                        />
+                                    </div>
+                                    <input
+                                        className="glass"
+                                        placeholder="Tags (comma)"
+                                        value={questionForm.tags}
+                                        onChange={(e) => setQuestionForm({ ...questionForm, tags: e.target.value })}
+                                        style={{ padding: '10px' }}
+                                    />
                                 </div>
-                            </div>
-                        ))}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                    <input
+                                        type="datetime-local"
+                                        className="glass"
+                                        value={questionForm.unlockDate}
+                                        onChange={(e) => setQuestionForm({ ...questionForm, unlockDate: e.target.value })}
+                                        style={{ padding: '10px' }}
+                                    />
+                                    <input
+                                        type="datetime-local"
+                                        className="glass"
+                                        value={questionForm.deadlineDate}
+                                        onChange={(e) => setQuestionForm({ ...questionForm, deadlineDate: e.target.value })}
+                                        style={{ padding: '10px' }}
+                                    />
+                                </div>
+                                <div className="form-group" style={{ marginTop: '0.5rem' }}>
+                                    <label style={{ fontSize: '0.85rem', color: '#d6d6d6', marginBottom: '0.3rem', display: 'block' }}>Is This Final Week?</label>
+                                    <select 
+                                        className="glass" 
+                                        style={{ width: '100%', padding: '10px' }}
+                                        value={questionForm.isFinalWeek ? 'true' : 'false'} 
+                                        onChange={(e) => setQuestionForm({...questionForm, isFinalWeek: e.target.value === 'true'})}
+                                    >
+                                        <option value="false">No</option>
+                                        <option value="true">Yes</option>
+                                    </select>
+                                </div>
+                                <button type="submit" className="btn btn-primary">
+                                    {isEditing ? 'Update' : 'Publish'}
+                                </button>
+                                {isEditing && (
+                                    <button type="button" className="btn glass" onClick={() => setIsEditing(false)}>
+                                        Cancel
+                                    </button>
+                                )}
+                            </form>
+                        </div>
+                        <div className="card" style={{ padding: '1.5rem', maxHeight: '720px', overflowY: 'auto' }}>
+                            <h3 style={{ marginTop: 0 }}>Existing questions</h3>
+                            {questions.map((q) => (
+                                <div
+                                    key={q._id}
+                                    className="card"
+                                    style={{
+                                        marginBottom: '0.75rem',
+                                        padding: '0.75rem',
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        gap: '0.5rem',
+                                    }}
+                                >
+                                    <div>
+                                        <strong>{q.title}</strong>
+                                        <div style={{ fontSize: '0.8rem', color: 'gray' }}>
+                                            {q.difficulty} · Week linked via task
+                                        </div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                        <button
+                                            type="button"
+                                            className="btn glass"
+                                            onClick={() => {
+                                                setIsEditing(true);
+                                                setQuestionForm({
+                                                    ...q,
+                                                    sampleInput: q.sampleTestCases?.[0]?.input || '',
+                                                    sampleOutput: q.sampleTestCases?.[0]?.output || '',
+                                                    hiddenInput: q.hiddenTestCases?.[0]?.input || '',
+                                                    hiddenOutput: q.hiddenTestCases?.[0]?.output || '',
+                                                    primaryLanguage: q.primaryLanguage || 'C',
+                                                    tags: q.tags?.join(', ') || '',
+                                                    weekNumber: '',
+                                                    isFinalWeek: false,
+                                                    unlockDate: '',
+                                                    deadlineDate: '',
+                                                });
+                                            }}
+                                        >
+                                            <Edit size={16} />
+                                        </button>
+                                        <button type="button" className="btn glass" style={{ color: '#ef4444' }} onClick={() => handleDeleteQuestion(q._id)}>
+                                            <Trash size={16} />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 </div>
             )}
 
             {activeTab === 'students' && (
-                <div className="card" style={{ padding: '1.5rem', overflowX: 'auto' }}>
-                    <h2 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <Users size={22} /> Student tracking
-                    </h2>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                        <thead>
-                            <tr style={{ borderBottom: '2px solid var(--border)', color: 'gray' }}>
-                                <th style={{ padding: '0.75rem 0' }}>Student</th>
-                                <th>Solved / Pending</th>
-                                <th>Class</th>
-                                <th>Section</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {students.map((s) => (
-                                <tr key={s._id} style={{ borderBottom: '1px solid var(--border)' }}>
-                                    <td style={{ padding: '0.75rem 0' }}>
-                                        <div style={{ fontWeight: 600 }}>{s.name}</div>
-                                        <div style={{ fontSize: '0.8rem', color: 'gray' }}>{s.regNo}</div>
-                                    </td>
-                                    <td>
-                                        <span style={{ color: '#10b981' }}>{s.solvedCount}</span> /{' '}
-                                        <span style={{ color: '#f87171' }}>{s.pendingCount}</span>
-                                    </td>
-                                    <td>{s.classAndYear || '—'}</td>
-                                    <td>{s.section || '—'}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    <AdvancedFilterPanel
+                        filters={advancedFilters}
+                        onFilterChange={handleFilterChange}
+                        onReset={handleResetFilters}
+                        onSearch={handleSearch}
+                        totalResults={filteredResults?.pagination?.total}
+                    />
+                    <div className="card" style={{ padding: '1.5rem', overflowX: 'auto' }}>
+                        <h2 style={{ marginTop: 0, display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                            <Users size={22} /> Student tracking
+                            {filteredResults?.summary && (
+                                <span style={{ fontSize: '0.75rem', color: '#888', fontWeight: 'normal', marginLeft: '1rem' }}>
+                                    <strong style={{ color: '#34d399' }}>{filteredResults.summary.averageAccuracy}%</strong> avg accuracy | <strong style={{ color: '#e7c965' }}>{filteredResults.summary.totalPoints.toLocaleString()}</strong> pts
+                                </span>
+                            )}
+                        </h2>
+                        {filterLoading ? (
+                            <div style={{ textAlign: 'center', padding: '2rem', color: '#888' }}>
+                                <RefreshCw size={24} className="spin" style={{ margin: '0 auto 0.5rem', display: 'block' }} />
+                                Filtering students...
+                            </div>
+                        ) : (
+                            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '2px solid var(--border)', color: 'gray' }}>
+                                        <th style={{ padding: '0.75rem 0' }}>Student</th>
+                                        <th>Reg No</th>
+                                        <th>Solved / Failed</th>
+                                        <th>Lab</th>
+                                        <th>Accuracy</th>
+                                        <th>Points</th>
+                                        <th>Language</th>
+                                        <th>Active Time</th>
+                                        <th>Consistency</th>
+                                        <th>Streak</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {(filteredResults?.students || []).length === 0 && (
+                                        <tr><td colSpan="11" style={{ padding: '2rem', textAlign: 'center', color: '#888' }}>No students match your filters</td></tr>
+                                    )}
+                                    {(filteredResults?.students || []).map((s) => (
+                                        <tr key={s._id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                            <td style={{ padding: '0.75rem 0' }}>
+                                                <div style={{ fontWeight: 600 }}>{s.name}</div>
+                                                <div style={{ fontSize: '0.8rem', color: 'gray' }}>{s.regNo}</div>
+                                            </td>
+                                            <td style={{ fontSize: '0.8rem', color: 'gray' }}>{s.regNo}</td>
+                                            <td>
+                                                <span style={{ color: '#10b981' }}>{s.acceptedSubmissions}</span> /{' '}
+                                                <span style={{ color: s.failedCount > 0 ? '#f87171' : '#666' }}>{s.failedCount || 0}</span>
+                                            </td>
+                                            <td><span style={{ background: 'rgba(130,84,238,0.2)', color: '#8254ee', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem' }}>{s.assignedLab}</span></td>
+                                            <td>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                                                    <div style={{ width: '40px', height: '4px', background: '#333', borderRadius: '2px', overflow: 'hidden' }}>
+                                                        <div style={{ width: `${s.accuracy || 0}%`, height: '100%', background: 'linear-gradient(90deg, #8254ee, #34d399)', borderRadius: '2px' }} />
+                                                    </div>
+                                                    <span style={{ fontSize: '0.7rem', color: s.accuracy > 70 ? '#34d399' : s.accuracy > 40 ? '#e7c965' : '#ef4444' }}>{s.accuracy}%</span>
+                                                </div>
+                                            </td>
+                                            <td style={{ color: '#e7c965', fontWeight: 'bold', fontSize: '0.85rem' }}>{s.totalPoints}</td>
+                                            <td>
+                                                {s.bestLanguage ? (
+                                                    <span style={{ background: 'rgba(86,182,194,0.15)', color: '#56b6c2', padding: '2px 8px', borderRadius: '4px', fontSize: '0.7rem' }}>{s.bestLanguage}</span>
+                                                ) : <span style={{ color: '#555' }}>—</span>}
+                                            </td>
+                                            <td style={{ color: '#06b6d4', fontSize: '0.75rem' }}>{s.totalActiveSolveTime ? `${Math.floor(s.totalActiveSolveTime / 60)}m` : '—'}</td>
+                                            <td>
+                                                <span style={{ color: s.consistencyScore > 70 ? '#34d399' : s.consistencyScore > 40 ? '#e7c965' : '#ef4444', fontSize: '0.75rem' }}>{s.consistencyScore || 0}%</span>
+                                            </td>
+                                            <td style={{ color: '#f59e0b', fontSize: '0.75rem' }}>{s.consistencyStreak || 0}d</td>
+                                            <td>
+                                                {s.isActive ? (
+                                                    <span style={{ color: '#34d399', fontSize: '0.7rem' }}>Active</span>
+                                                ) : (
+                                                    <span style={{ color: '#666', fontSize: '0.7rem' }}>Inactive</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                        {filteredResults?.pagination && filteredResults.pagination.totalPages > 1 && (
+                            <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+                                <button className="glass" disabled={advancedFilters.page <= 1} onClick={() => handleFilterChange({ ...advancedFilters, page: advancedFilters.page - 1 })} style={{ padding: '5px 12px', borderRadius: '5px', fontSize: '0.75rem', opacity: advancedFilters.page <= 1 ? 0.4 : 1, cursor: advancedFilters.page <= 1 ? 'not-allowed' : 'pointer', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#ccc' }}>Previous</button>
+                                <span style={{ fontSize: '0.75rem', color: '#888', padding: '5px 0' }}>Page {filteredResults.pagination.page} of {filteredResults.pagination.totalPages}</span>
+                                <button className="glass" disabled={advancedFilters.page >= filteredResults.pagination.totalPages} onClick={() => handleFilterChange({ ...advancedFilters, page: advancedFilters.page + 1 })} style={{ padding: '5px 12px', borderRadius: '5px', fontSize: '0.75rem', opacity: advancedFilters.page >= filteredResults.pagination.totalPages ? 0.4 : 1, cursor: advancedFilters.page >= filteredResults.pagination.totalPages ? 'not-allowed' : 'pointer', border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.04)', color: '#ccc' }}>Next</button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 

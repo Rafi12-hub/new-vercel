@@ -1,37 +1,55 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
-import { User, Mail, Lock, BookOpen, UserCheck, Award } from 'lucide-react';
+import { User, Mail, Award, BookOpen, UserCheck, Calendar, Hash, Layers } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-const LAB_OPTIONS = [
-    'C', 
-    'DS', 
-    'ADSAA', 
-    'JAVA', 
-    'PYTHON', 
-    'DBMS', 
-    'OS', 
-    'CN', 
-    'AI', 
-    'ML', 
-    'FSAD'
-];
+const YEAR_OPTIONS = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
 
-const YEAR_OPTIONS = [
-    '1st Year', '2nd Year', '3rd Year', '4th Year'
-];
+const SEMESTER_OPTIONS = ['2-1', '2-2', '3-1', '3-2'];
+
+const SECTION_OPTIONS = ['A', 'B', 'C'];
+
+const BRANCH_OPTIONS = ['CSE', 'CSM', 'CSD', 'ECE', 'EEE', 'MECH', 'CIVIL'];
+
+const SEMESTER_LAB_MAP = {
+    '2': {
+        '2-1': ['ADSAA', 'JAVA', 'PYTHON'],
+        '2-2': ['OS', 'DBMS']
+    },
+    '3': {
+        '3-1': ['FSAD', 'AI', 'CN', 'TNK'],
+        '3-2': ['ML', 'C&NS']
+    }
+};
+
+function getYearNum(year) {
+    const m = String(year).match(/^(\d+)/);
+    return m ? m[1] : null;
+}
+
+function getAssignedLabs(year, semester) {
+    const yn = getYearNum(year);
+    if (!yn || !semester) return [];
+    const ym = SEMESTER_LAB_MAP[yn];
+    if (!ym) return [];
+    return ym[semester] || [];
+}
 
 const RegisterPage = () => {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [regNo, setRegNo] = useState('');
-    const [classAndYear, setClassAndYear] = useState('2nd Year');
-    const [selectedLab, setSelectedLab] = useState('DBMS');
+    const [dateOfBirth, setDateOfBirth] = useState('');
+    const [year, setYear] = useState('2nd Year');
+    const [semester, setSemester] = useState('2-1');
+    const [section, setSection] = useState('A');
+    const [branch, setBranch] = useState('CSE');
     const [facultyName, setFacultyName] = useState('');
-    const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
+
+    const assignedLabs = useMemo(() => getAssignedLabs(year, semester), [year, semester]);
     
     const { register } = useAuth();
     const navigate = useNavigate();
@@ -41,9 +59,8 @@ const RegisterPage = () => {
         setError('');
         setSuccess('');
 
-        // Basic Client validations
-        if (!name || !email || !regNo || !classAndYear || !selectedLab || !facultyName || !password) {
-            setError('All fields are required');
+        if (!name || !email || !regNo || !dateOfBirth || !year || !semester || !facultyName) {
+            setError('All required fields must be filled');
             return;
         }
 
@@ -53,18 +70,32 @@ const RegisterPage = () => {
             return;
         }
 
+        const dobRegex = /^\d{2}-\d{2}-\d{4}$/;
+        if (!dobRegex.test(dateOfBirth)) {
+            setError('Date of Birth must be in DD-MM-YYYY format (e.g., 12-08-2005)');
+            return;
+        }
+
+        const yn = getYearNum(year);
+        if (!yn || !['2', '3'].includes(yn)) {
+            setError('Lab assignments are available for 2nd and 3rd Year only');
+            return;
+        }
+
         try {
-            // Trim regNo and clean it up
             const cleanedRegNo = String(regNo).trim();
 
             await register({
                 name,
                 email,
                 regNo: cleanedRegNo,
-                classAndYear,
-                selectedLab,
-                facultyName,
-                password
+                dateOfBirth,
+                year,
+                semester,
+                section,
+                branch,
+                assignedLab: assignedLabs[0] || '',
+                facultyName
             });
 
             setSuccess('Registration successful! Redirecting to dashboard...');
@@ -87,7 +118,6 @@ const RegisterPage = () => {
                 padding: '40px 20px',
                 position: 'relative',
                 overflow: 'hidden',
-                fontFamily: 'Times New Roman, serif',
             }}
         >
             <motion.div
@@ -124,7 +154,7 @@ const RegisterPage = () => {
                 className="card"
                 style={{ 
                     width: '100%', 
-                    maxWidth: '520px', 
+                    maxWidth: '620px', 
                     zIndex: 1, 
                     padding: '2.5rem', 
                     background: 'rgba(9,9,9,0.85)', 
@@ -187,18 +217,18 @@ const RegisterPage = () => {
                         STUDENT REGISTRATION
                     </h1>
                     <p style={{ color: '#c1cfc1', margin: '0.4rem 0 0 0', fontSize: '0.9rem' }}>
-                        Create your RGMCSE compiler account to start coding
+                        First time? Create your RGMCSE compiler account
                     </p>
                 </div>
 
                 {error && <div style={{ color: '#ff5c5c', marginBottom: '1.25rem', textAlign: 'center', fontWeight: 'bold' }}>{error}</div>}
-                {success && <div style={{ color: '#c1cfc1', marginBottom: '1.25rem', textAlign: 'center', fontWeight: 'bold' }}>{success}</div>}
+                {success && <div style={{ color: '#34d399', marginBottom: '1.25rem', textAlign: 'center', fontWeight: 'bold' }}>{success}</div>}
 
-                <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.2rem' }}>
+                <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     
                     {/* Full Name */}
                     <div>
-                        <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.95rem' }}>Full Name</label>
+                        <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.9rem' }}>Full Name *</label>
                         <div style={{ position: 'relative' }}>
                             <User size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
                             <input
@@ -213,27 +243,26 @@ const RegisterPage = () => {
                         </div>
                     </div>
 
-                    {/* Email */}
-                    <div>
-                        <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.95rem' }}>Email Address</label>
-                        <div style={{ position: 'relative' }}>
-                            <Mail size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
-                            <input
-                                type="email"
-                                className="card"
-                                style={{ width: '100%', padding: '10px 10px 10px 38px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
-                                placeholder="yourname@college.edu"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                required
-                            />
-                        </div>
-                    </div>
-
-                    {/* Reg No & Password side-by-side */}
+                    {/* Email & Reg No side-by-side */}
                     <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
                         <div style={{ flex: '1 1 200px' }}>
-                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.95rem' }}>Registration Number</label>
+                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.9rem' }}>Email Address *</label>
+                            <div style={{ position: 'relative' }}>
+                                <Mail size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
+                                <input
+                                    type="email"
+                                    className="card"
+                                    style={{ width: '100%', padding: '10px 10px 10px 38px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
+                                    placeholder="yourname@college.edu"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    required
+                                />
+                            </div>
+                        </div>
+
+                        <div style={{ flex: '1 1 200px' }}>
+                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.9rem' }}>Registration Number *</label>
                             <div style={{ position: 'relative' }}>
                                 <Award size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
                                 <input
@@ -247,34 +276,38 @@ const RegisterPage = () => {
                                 />
                             </div>
                         </div>
+                    </div>
 
-                        <div style={{ flex: '1 1 200px' }}>
-                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.95rem' }}>Password</label>
-                            <div style={{ position: 'relative' }}>
-                                <Lock size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
-                                <input
-                                    type="password"
-                                    className="card"
-                                    style={{ width: '100%', padding: '10px 10px 10px 38px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
-                                    placeholder="••••••••"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    required
-                                />
-                            </div>
+                    {/* Date of Birth */}
+                    <div>
+                        <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.9rem' }}>Date of Birth *</label>
+                        <div style={{ position: 'relative' }}>
+                            <Calendar size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
+                            <input
+                                type="text"
+                                className="card"
+                                style={{ width: '100%', padding: '10px 10px 10px 38px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
+                                placeholder="DD-MM-YYYY (e.g. 12-08-2005)"
+                                value={dateOfBirth}
+                                onChange={(e) => setDateOfBirth(e.target.value)}
+                                required
+                            />
+                        </div>
+                        <div style={{ marginTop: '6px', fontSize: '0.75rem', color: '#34d399' }}>
+                            Your password will be set to this date automatically. Use it to login.
                         </div>
                     </div>
 
-                    {/* Year & Assigned Lab side-by-side */}
+                    {/* Year & Semester side-by-side */}
                     <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                        <div style={{ flex: '1 1 200px' }}>
-                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.95rem' }}>Year</label>
+                        <div style={{ flex: '1 1 180px' }}>
+                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.9rem' }}>Year *</label>
                             <div style={{ position: 'relative' }}>
                                 <BookOpen size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
                                 <select
                                     style={{ width: '100%', padding: '10px 10px 10px 38px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none', cursor: 'pointer' }}
-                                    value={classAndYear}
-                                    onChange={(e) => setClassAndYear(e.target.value)}
+                                    value={year}
+                                    onChange={(e) => { setYear(e.target.value); setSemester(''); }}
                                 >
                                     {YEAR_OPTIONS.map(yr => (
                                         <option key={yr} value={yr} style={{ background: '#090909' }}>{yr}</option>
@@ -283,26 +316,96 @@ const RegisterPage = () => {
                             </div>
                         </div>
 
-                        <div style={{ flex: '1 1 200px' }}>
-                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.95rem' }}>Assigned Lab</label>
+                        <div style={{ flex: '1 1 180px' }}>
+                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.9rem' }}>Semester *</label>
+                            <div style={{ position: 'relative' }}>
+                                <Layers size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
+                                <select
+                                    style={{ width: '100%', padding: '10px 10px 10px 38px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none', cursor: 'pointer' }}
+                                    value={semester}
+                                    onChange={(e) => setSemester(e.target.value)}
+                                    required
+                                >
+                                    <option value="" style={{ background: '#090909' }}>Select Semester</option>
+                                    {SEMESTER_OPTIONS.map(s => {
+                                        const yn = getYearNum(year);
+                                        const isDisabled = !yn || !SEMESTER_LAB_MAP[yn] || !SEMESTER_LAB_MAP[yn][s];
+                                        return (
+                                            <option key={s} value={s} disabled={isDisabled} style={{ background: '#090909' }}>
+                                                {s}{isDisabled ? ' (N/A)' : ''}
+                                            </option>
+                                        );
+                                    })}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div style={{ flex: '1 1 120px' }}>
+                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.9rem' }}>Section *</label>
+                            <div style={{ position: 'relative' }}>
+                                <Hash size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
+                                <select
+                                    style={{ width: '100%', padding: '10px 10px 10px 38px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none', cursor: 'pointer' }}
+                                    value={section}
+                                    onChange={(e) => setSection(e.target.value)}
+                                >
+                                    {SECTION_OPTIONS.map(s => (
+                                        <option key={s} value={s} style={{ background: '#090909' }}>{s}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div style={{ flex: '1 1 150px' }}>
+                            <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.9rem' }}>Branch *</label>
                             <div style={{ position: 'relative' }}>
                                 <BookOpen size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
                                 <select
                                     style={{ width: '100%', padding: '10px 10px 10px 38px', borderRadius: '0.5rem', background: '#090909', border: '1px solid rgba(255,255,255,0.1)', color: 'white', outline: 'none', cursor: 'pointer' }}
-                                    value={selectedLab}
-                                    onChange={(e) => setSelectedLab(e.target.value)}
+                                    value={branch}
+                                    onChange={(e) => setBranch(e.target.value)}
                                 >
-                                    {LAB_OPTIONS.map(lab => (
-                                        <option key={lab} value={lab} style={{ background: '#090909' }}>{lab}</option>
+                                    {BRANCH_OPTIONS.map(b => (
+                                        <option key={b} value={b} style={{ background: '#090909' }}>{b}</option>
                                     ))}
                                 </select>
                             </div>
                         </div>
                     </div>
 
+                    {/* Auto-Assigned Labs Display */}
+                    {assignedLabs.length > 0 && (
+                        <div style={{
+                            padding: '1rem',
+                            background: 'rgba(52, 211, 153, 0.08)',
+                            border: '1px solid rgba(52, 211, 153, 0.25)',
+                            borderRadius: '10px',
+                        }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', color: '#34d399', fontSize: '0.85rem', fontWeight: 600 }}>
+                                <Layers size={14} style={{ verticalAlign: 'middle', marginRight: '4px' }} />
+                                Automatically Assigned Labs
+                            </label>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                                {assignedLabs.map(lab => (
+                                    <span key={lab} style={{
+                                        padding: '4px 12px',
+                                        background: 'rgba(130, 84, 238, 0.2)',
+                                        color: '#c1cfc1',
+                                        borderRadius: '6px',
+                                        fontSize: '0.8rem',
+                                        border: '1px solid rgba(130, 84, 238, 0.3)',
+                                        fontWeight: 500,
+                                    }}>
+                                        {lab}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {/* Faculty Name */}
                     <div>
-                        <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.95rem' }}>Faculty Name</label>
+                        <label style={{ display: 'block', marginBottom: '0.4rem', color: '#c1cfc1', fontSize: '0.9rem' }}>Faculty Name *</label>
                         <div style={{ position: 'relative' }}>
                             <UserCheck size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#82717b' }} />
                             <input

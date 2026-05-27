@@ -8,25 +8,27 @@ const seedAdmins = async () => {
         await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/rgm-compiler');
 
         const admins = [
-            { email: 'clabadmin@platformhub.com', password: 'C@123', role: 'labadmin', assignedLab: 'C' },
-            { email: 'pythonadmin@platformhub.com', password: 'Python@123', role: 'labadmin', assignedLab: 'PYTHON' },
-            { email: 'dbmsadmin@platformhub.com', password: 'DBMS@123', role: 'labadmin', assignedLab: 'DBMS' }
+            { email: 'labadmin.c@platformhub.com', password: 'C@123', role: 'labadmin', name: 'C Lab Admin', assignedLab: 'C' },
+            { email: 'labadmin.python@platformhub.com', password: 'Python@123', role: 'labadmin', name: 'Python Lab Admin', assignedLab: 'PYTHON' },
+            { email: 'labadmin.dbms@platformhub.com', password: 'DBMS@123', role: 'labadmin', name: 'DBMS Lab Admin', assignedLab: 'DBMS' },
+            { email: 'faculty.c@platformhub.com', password: 'FacultyC@123', role: 'faculty', name: 'C Faculty', assignedLab: 'C' },
+            { email: 'faculty.dbms@platformhub.com', password: 'FacultyDBMS@123', role: 'faculty', name: 'DBMS Faculty', assignedLab: 'DBMS' },
         ];
 
         for (const admin of admins) {
             let existing = await Admin.findOne({ email: admin.email });
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(admin.password, salt);
             if (!existing) {
-                const salt = await bcrypt.genSalt(10);
-                const hashedPassword = await bcrypt.hash(admin.password, salt);
                 await Admin.create({ ...admin, password: hashedPassword });
-                console.log(`Created admin: ${admin.email}`);
+                console.log(`Created ${admin.role}: ${admin.email}`);
             } else {
-                const salt = await bcrypt.genSalt(10);
-                const hashedPassword = await bcrypt.hash(admin.password, salt);
                 existing.password = hashedPassword;
                 existing.assignedLab = admin.assignedLab;
+                existing.role = admin.role;
+                existing.name = admin.name;
                 await existing.save();
-                console.log(`Updated admin: ${admin.email}`);
+                console.log(`Updated ${admin.role}: ${admin.email}`);
             }
         }
         console.log('Admin seeding complete.');

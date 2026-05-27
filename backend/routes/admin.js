@@ -1,22 +1,30 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
-const Admin = require('../models/Admin');
-const Question = require('../models/Question');
-const WeeklyTask = require('../models/WeeklyTask');
-const User = require('../models/User');
-const Submission = require('../models/Submission');
-const ViolationReport = require('../models/ViolationReport');
+const { db } = require('../config/firebase');
+const { students, questions, weeklyTasks, submissions, violations } = require('../config/dbHelper');
+const { normalizeLabName } = require('../utils/labUtils');
+const axios = require('axios');
 
 // =====================================
 // Admin Authentication & Management Routes
 // =====================================
 
-/**
- * Super Admin & Lab Admin Login
- * Authenticates admin credentials and returns JWT token
- */
-// Admin Login
+// Helper to authenticate using Firebase Auth REST API
+async function authenticateWithFirebase(email, password) {
+    const apiKey = process.env.FIREBASE_API_KEY;
+    if (!apiKey) {
+        throw new Error('FIREBASE_API_KEY is not set in environment variables');
+    }
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
+    const response = await axios.post(url, {
+        email,
+        password,
+        returnSecureToken: true
+    });
+    return response.data;
+}
+
 router.post('/login', async (req, res) => {
     const { email, password, expectedRole } = req.body;
 
@@ -27,65 +35,76 @@ router.post('/login', async (req, res) => {
     const normalizedEmail = email.trim().toLowerCase();
 
     try {
-        const bcrypt = require('bcryptjs');
-        let admin = await Admin.findOne({ email: normalizedEmail });
-
-        const testEmail = 'syedamanmirzanulla@gmail.com';
-        const testPassword = 'Syed@123';
-        const testRoles = ['hod', 'superadmin', 'faculty', 'labadmin', 'admin'];
-        if (normalizedEmail === testEmail && password === testPassword && expectedRole && testRoles.includes(expectedRole)) {
-            const salt = await bcrypt.genSalt(10);
-            const hashedPassword = await bcrypt.hash(testPassword, salt);
-            admin = await Admin.findOneAndUpdate(
-                { email: testEmail },
-                {
-                    name: expectedRole === 'hod' || expectedRole === 'superadmin' ? 'HOD CSE' : 'RGMCSE Test Staff',
-                    email: testEmail,
-                    password: hashedPassword,
-                    role: expectedRole === 'superadmin' ? 'hod' : expectedRole,
-                    assignedLab: expectedRole === 'labadmin' ? 'C' : undefined,
-                    assignedDepartment: 'CSE',
-                    isActive: true,
-                },
-                { upsert: true, new: true, setDefaultsOnInsert: true }
-            );
+        let authData;
+        try {
+            authData = await authenticateWithFirebase(normalizedEmail, password);
+        } catch (authErr) {
+            const fbError = authErr.response?.data?.error || {};
+            const fbMessage = fbError.message || authErr.message;
+            console.error('[ADMIN LOGIN] Firebase auth error:', fbMessage);
+            let userMessage = 'Invalid credentials';
+            if (fbMessage.includes('EMAIL_NOT_FOUND') || fbMessage.includes('user-not-found')) {
+                userMessage = 'Account not found in Firebase Auth. Create the user in Firebase Console first.';
+            } else if (fbMessage.includes('INVALID_PASSWORD') || fbMessage.includes('INVALID_LOGIN_CREDENTIALS')) {
+                userMessage = 'Wrong password. Check the password in Firebase Console.';
+            } else if (fbMessage.includes('INVALID_EMAIL')) {
+                userMessage = 'Invalid email format.';
+            } else if (fbMessage.includes('TOO_MANY_ATTEMPTS_TRY_LATER')) {
+                userMessage = 'Too many failed attempts. Account temporarily locked.';
+            }
+            return res.status(400).json({ message: userMessage, debug: fbMessage });
         }
 
-        if (!admin) {
-            return res.status(400).json({ message: 'Invalid credentials' });
-        }
-
-        const roleMatches = admin.role === expectedRole || (expectedRole === 'superadmin' && admin.role === 'hod');
-        if (expectedRole && !roleMatches) {
-            return res.status(403).json({
-                message: `This account cannot sign in as ${expectedRole}. Use the correct portal for your role.`,
-            });
-        }
-
-        let isMatch = false;
-        const isHashed = admin.password.startsWith('$2a$') || admin.password.startsWith('$2b$');
-
-        if (isHashed) {
-            isMatch = await bcrypt.compare(password, admin.password);
-        } else {
-            isMatch = admin.password === password;
-
-            if (isMatch) {
-                const salt = await bcrypt.genSalt(10);
-                admin.password = await bcrypt.hash(password, salt);
-                await admin.save();
+        const uid = authData.localId;
+        const firebaseEmail = authData.email || normalizedEmail;
+        console.log(`[ADMIN LOGIN] Firebase Auth OK: uid=${uid}, email=${firebaseEmail}`);
+        
+        // Fetch role from Firestore users collection
+        let userDoc = await db.collection('users').doc(uid).get();
+        
+        // Fallback: look up by email if uid lookup fails
+        if (!userDoc.exists) {
+            console.log(`[ADMIN LOGIN] No doc found by uid ${uid}, trying email lookup...`);
+            const emailQuery = await db.collection('users').where('email', '==', firebaseEmail).get();
+            if (!emailQuery.empty) {
+                userDoc = emailQuery.docs[0];
+                console.log(`[ADMIN LOGIN] Found user doc by email: ${userDoc.id}`);
             }
         }
 
-        if (!isMatch) {
-            return res.status(400).json({ message: 'Invalid credentials' });
+        if (!userDoc.exists) {
+            console.error(`[ADMIN LOGIN] FAILED: No Firestore doc for uid=${uid} or email=${firebaseEmail}`);
+            return res.status(404).json({
+                message: 'User role not found in Firestore. Create a document in the "users" collection with matching uid or email.',
+                debug: { uid, email: firebaseEmail }
+            });
+        }
+        const adminData = userDoc.data();
+        console.log(`[ADMIN LOGIN] Firestore doc found: role=${adminData.role}, name=${adminData.name}`);
+
+        // Normalize role to lowercase for consistency
+        const normalizedRole = adminData.role ? adminData.role.toLowerCase() : '';
+        adminData.role = normalizedRole;
+
+        // Check account is active
+        if (adminData.isActive === false) {
+            return res.status(403).json({ message: 'Account is disabled. Contact HOD.' });
+        }
+
+        // Validate expectedRole matches actual role
+        if (expectedRole && normalizedRole !== expectedRole.toLowerCase()) {
+            console.error(`[ADMIN LOGIN] Role mismatch: expected="${expectedRole}", actual="${normalizedRole}"`);
+            return res.status(400).json({
+                message: `This account has role "${normalizedRole}" but you selected "${expectedRole}". Select the correct portal.`,
+                debug: { expectedRole, actualRole: normalizedRole }
+            });
         }
 
         const payload = { 
             admin: { 
-                id: admin.id, 
-                role: admin.role, 
-                assignedLab: admin.assignedLab 
+                id: uid, 
+                role: normalizedRole, 
+                assignedLab: adminData.assignedLab || adminData.department 
             } 
         };
 
@@ -96,21 +115,19 @@ router.post('/login', async (req, res) => {
             }
             res.json({ 
                 token, 
-                role: admin.role,
+                role: normalizedRole,
                 admin: { 
-                    id: admin.id, 
-                    email: admin.email, 
-                    role: admin.role, 
-                    assignedLab: admin.assignedLab,
-                    name: admin.name,
-                    weeklyUnlockDay: admin.weeklyUnlockDay,
-                    weeklyUnlockTime: admin.weeklyUnlockTime,
+                    id: uid, 
+                    email: adminData.email, 
+                    role: normalizedRole, 
+                    assignedLab: adminData.assignedLab,
+                    name: adminData.name
                 } 
             });
         });
     } catch (err) {
         console.error(` [SERVER ERROR] ${err.message}`);
-        res.status(500).send('Server error');
+        res.status(500).json({ message: err.message || 'Server error' });
     }
 });
 
@@ -127,7 +144,7 @@ const authAdmin = (req, res, next) => {
     }
 };
 
-const isHodRole = (role) => role === 'superadmin' || role === 'hod';
+const isHodRole = (role) => role === 'hod';
 
 // Lab admin: set recurring weekly unlock (scheduler uses weeklyUnlockDay + weeklyUnlockTime)
 router.put('/me/weekly-unlock', authAdmin, async (req, res) => {
@@ -159,8 +176,11 @@ router.put('/me/weekly-unlock', authAdmin, async (req, res) => {
 // @desc    Get current admin data
 router.get('/me', authAdmin, async (req, res) => {
     try {
-        const admin = await Admin.findById(req.admin.id).select('-password');
-        res.json(admin);
+        const userDoc = await db.collection('users').doc(req.admin.id).get();
+        if (!userDoc.exists) {
+            return res.status(404).json({ message: 'Admin not found' });
+        }
+        res.json(userDoc.data());
     } catch (err) {
         res.status(500).send('Server error');
     }
@@ -172,7 +192,8 @@ router.get('/stats', authAdmin, async (req, res) => {
         let studentQuery = {};
         let questionQuery = {};
         
-        if (req.admin.role === 'labadmin' || req.admin.role === 'admin') {
+        const isStaffRole = ['labadmin', 'faculty'].includes(req.admin.role);
+        if (isStaffRole) {
             studentQuery.$or = [{ assignedLab: req.admin.assignedLab }, { selectedLab: req.admin.assignedLab }];
             questionQuery.labName = req.admin.assignedLab;
         }
@@ -184,7 +205,7 @@ router.get('/stats', authAdmin, async (req, res) => {
         
         // Filter submissions to only those matching the questions the admin is allowed to see
         let submissions = await Submission.find().populate('user', 'name regNo assignedLab selectedLab').populate('question', 'title labName').sort({ submittedAt: -1 });
-        if (req.admin.role === 'labadmin' || req.admin.role === 'admin') {
+        if (isStaffRole) {
             submissions = submissions.filter(s => s.question && s.question.labName === req.admin.assignedLab && s.user && (s.user.assignedLab || s.user.selectedLab) === req.admin.assignedLab);
         }
         
@@ -282,11 +303,21 @@ router.get('/stats', authAdmin, async (req, res) => {
             const lab = student.assignedLab || student.selectedLab || 'Unknown Lab';
 
             if (yearWise[year]) {
-                yearWise[year].solved++;
-                yearWise[year].active++;
+                yearWise[year].solved = (yearWise[year].solved || 0) + 1;
+                yearWise[year].active = (yearWise[year].active || 0) + 1;
+            } else {
+                yearWise[year] = { students: 0, active: 1, solved: 1, pending: 0 };
             }
-            if (sectionWise[section]) sectionWise[section].solved++;
-            if (labWise[lab]) labWise[lab].solved++;
+            if (sectionWise[section]) {
+                sectionWise[section].solved = (sectionWise[section].solved || 0) + 1;
+            } else {
+                sectionWise[section] = { students: 0, solved: 1, pending: 0 };
+            }
+            if (labWise[lab]) {
+                labWise[lab].solved = (labWise[lab].solved || 0) + 1;
+            } else {
+                labWise[lab] = { students: 0, solved: 1, pending: 0 };
+            }
         });
 
         // Upcoming Unlocks
@@ -299,7 +330,7 @@ router.get('/stats', authAdmin, async (req, res) => {
         }).sort({ weekNumber: 1 }).limit(10);
 
         const facultySchedules = await Admin.find({ 
-            role: { $in: ['admin', 'labadmin'] },
+            role: { $in: ['faculty', 'labadmin'] },
             labDay: { $ne: null }
         }).select('name subject assignedLab labDay startTime endTime');
 
@@ -431,26 +462,70 @@ router.post('/questions', authAdmin, async (req, res) => {
             payload.labName = req.admin.assignedLab;
         }
         
+        // Normalize lab name to standard format
+        payload.labName = normalizeLabName(payload.labName);
+        
+        // Set published flag and assignment metadata
+        payload.published = true;
+        payload.visibleToStudents = true;
+        payload.createdBy = req.admin.id;
+        
+        // Get admin info for faculty name
+        if (payload.facultyName === '' || !payload.facultyName) {
+            const adminUser = await Admin.findById(req.admin.id).select('name');
+            if (adminUser) {
+                payload.facultyName = adminUser.name || req.admin.id;
+            }
+        }
+        
+        // Log for debugging
+        console.log(`[ADMIN] Creating question: labName="${payload.labName}", published=${payload.published}, visibleToStudents=${payload.visibleToStudents}`);
+        
         const question = new Question(payload);
         await question.save();
         
-        // If there's a weekNumber, we should add it to the corresponding WeeklyTask
+        // If there's a weekNumber, add to the corresponding WeeklyTask
         if (req.body.weekNumber) {
-            let task = await WeeklyTask.findOne({ weekNumber: req.body.weekNumber });
+            let task = await WeeklyTask.findOne({ weekNumber: req.body.weekNumber, labName: question.labName });
             if (task) {
                 task.questions.push(question._id);
+                await task.save();
+                question.weeklyTask = task._id;
+                await question.save();
+            } else {
+                // Create the weekly task if it doesn't exist
+                task = new WeeklyTask({
+                    weekNumber: Number(req.body.weekNumber),
+                    labName: question.labName,
+                    unlockDateTime: req.body.unlockStartTime ? new Date(req.body.unlockStartTime) : new Date(),
+                    deadlineDateTime: req.body.unlockEndTime ? new Date(req.body.unlockEndTime) : null,
+                    questions: [question._id],
+                    isUnlocked: true, // Auto-unlock for published questions
+                });
                 await task.save();
                 question.weeklyTask = task._id;
                 await question.save();
             }
         }
         
-        req.app.locals.io.emit('questionAdded', question);
-        req.app.locals.io.emit('notification', {
-            text: `New Question: ${question.title} added to ${question.labName}`,
-            type: 'task',
-            labName: question.labName
-        });
+        // Emit events
+        if (req.app.locals.io) {
+            req.app.locals.io.emit('questionAdded', question);
+            req.app.locals.io.emit('questionPublished', {
+                questionId: question._id,
+                labName: question.labName,
+                weekNumber: question.weekNumber,
+                title: question.title,
+                assignedYear: question.assignedYear,
+                assignedSection: question.assignedSection,
+                facultyName: question.facultyName,
+            });
+            req.app.locals.io.emit('notification', {
+                text: `New Question Published: ${question.title} (${question.labName} - Week ${question.weekNumber})`,
+                type: 'task',
+                labName: question.labName,
+            });
+        }
         res.json(question);
     } catch (err) {
         res.status(500).send('Server error');
@@ -510,7 +585,8 @@ router.get('/questions', authAdmin, async (req, res) => {
 router.get('/students', authAdmin, async (req, res) => {
     try {
         let studentQuery = {};
-        if (req.admin.role === 'labadmin' || req.admin.role === 'admin') {
+        const isStaffRole = ['labadmin', 'faculty'].includes(req.admin.role);
+        if (isStaffRole) {
             studentQuery.$or = [{ assignedLab: req.admin.assignedLab }, { selectedLab: req.admin.assignedLab }];
         }
         
@@ -518,7 +594,7 @@ router.get('/students', authAdmin, async (req, res) => {
         
         // submissions
         let submissions = await Submission.find().populate('question', 'title difficulty tags weeklyTask labName').populate('user', 'assignedLab selectedLab');
-        if (req.admin.role === 'labadmin' || req.admin.role === 'admin') {
+        if (isStaffRole) {
              submissions = submissions.filter(s => s.question && s.question.labName === req.admin.assignedLab && s.user && (s.user.assignedLab || s.user.selectedLab) === req.admin.assignedLab);
         }
         
@@ -612,7 +688,7 @@ router.post('/students', authAdmin, async (req, res) => {
 router.get('/faculty', authAdmin, async (req, res) => {
     try {
         if (!isHodRole(req.admin.role)) return res.status(403).json({ message: 'Forbidden' });
-        const faculty = await Admin.find({ role: { $in: ['admin', 'labadmin'] } }).select('-password');
+        const faculty = await Admin.find({ role: { $in: ['faculty', 'labadmin'] } }).select('-password');
         res.json(faculty);
     } catch (err) {
         res.status(500).send('Server error');
@@ -633,7 +709,7 @@ router.post('/faculty', authAdmin, async (req, res) => {
             name,
             email: email.toLowerCase().trim(),
             password: hashedPassword,
-            role: role || 'admin',
+            role: role || 'faculty',
             subject,
             assignedLab,
             assignedSections,
@@ -708,7 +784,7 @@ router.delete('/admins/:id', authAdmin, async (req, res) => {
 router.get('/violations', authAdmin, async (req, res) => {
     try {
         const q = {};
-        if (req.admin.role === 'labadmin' || req.admin.role === 'admin') {
+        if (['labadmin', 'faculty'].includes(req.admin.role)) {
             q.labName = req.admin.assignedLab;
         }
         const list = await ViolationReport.find(q)
@@ -724,7 +800,7 @@ router.get('/violations', authAdmin, async (req, res) => {
 
 router.post('/violations', authAdmin, async (req, res) => {
     try {
-        if (!['labadmin', 'admin', 'superadmin', 'hod'].includes(req.admin.role)) {
+        if (!['labadmin', 'faculty', 'hod'].includes(req.admin.role)) {
             return res.status(403).json({ message: 'Insufficient permission' });
         }
         const { studentId, title, details, severity, labName: bodyLab } = req.body;
@@ -768,7 +844,7 @@ router.patch('/violations/:id', authAdmin, async (req, res) => {
     try {
         const v = await ViolationReport.findById(req.params.id);
         if (!v) return res.status(404).json({ message: 'Not found' });
-        if (req.admin.role === 'labadmin' || req.admin.role === 'admin') {
+        if (['labadmin', 'faculty'].includes(req.admin.role)) {
             if (v.labName !== req.admin.assignedLab) {
                 return res.status(403).json({ message: 'Forbidden' });
             }
@@ -784,4 +860,182 @@ router.patch('/violations/:id', authAdmin, async (req, res) => {
     }
 });
 
+// =============================================
+// HOD ACCOUNT MANAGEMENT ENDPOINTS
+// =============================================
+
+/** Middleware: only HOD can manage accounts */
+const hodOnly = (req, res, next) => {
+    if (req.admin?.role !== 'hod') {
+        return res.status(403).json({ message: 'Only HOD can manage accounts' });
+    }
+    next();
+};
+
+/**
+ * GET /api/admin/manage/users
+ * List all faculty and lab admin accounts for HOD management.
+ */
+router.get('/manage/users', authAdmin, hodOnly, async (req, res) => {
+    try {
+        const { search, role, page = 1, limit = 50 } = req.query;
+        const filter = { role: { $in: ['faculty', 'labadmin'] } };
+        if (search) {
+            filter.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+            ];
+        }
+        if (role) filter.role = role;
+
+        const total = await Admin.countDocuments(filter);
+        const users = await Admin.find(filter)
+            .select('-password')
+            .sort({ role: 1, name: 1 })
+            .skip((parseInt(page) - 1) * parseInt(limit))
+            .limit(parseInt(limit))
+            .lean();
+
+        res.json({
+            users,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                totalPages: Math.ceil(total / parseInt(limit))
+            }
+        });
+    } catch (err) {
+        console.error('Manage users error:', err);
+        res.status(500).json({ message: 'Error fetching users' });
+    }
+});
+
+/**
+ * PUT /api/admin/manage/change-email
+ * HOD changes email of a faculty/labadmin.
+ */
+router.put('/manage/change-email', authAdmin, hodOnly, async (req, res) => {
+    try {
+        const { userId, newEmail } = req.body;
+        if (!userId || !newEmail) {
+            return res.status(400).json({ message: 'User ID and new email are required' });
+        }
+
+        // Validate email format
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(newEmail)) {
+            return res.status(400).json({ message: 'Invalid email format' });
+        }
+
+        // Check duplicate email
+        const existing = await Admin.findOne({ email: newEmail, _id: { $ne: userId } });
+        if (existing) {
+            return res.status(400).json({ message: 'Email already in use by another account' });
+        }
+
+        const target = await Admin.findById(userId);
+        if (!target) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        if (target.role === 'hod') {
+            return res.status(403).json({ message: 'Cannot modify HOD accounts' });
+        }
+
+        const oldEmail = target.email;
+        target.email = newEmail;
+        await target.save();
+
+        res.json({
+            message: 'Email updated successfully',
+            userId: target._id,
+            oldEmail,
+            newEmail,
+            name: target.name,
+            role: target.role
+        });
+    } catch (err) {
+        console.error('Change email error:', err);
+        res.status(500).json({ message: 'Error changing email' });
+    }
+});
+
+/**
+ * PUT /api/admin/manage/change-password
+ * HOD resets password of a faculty/labadmin.
+ */
+router.put('/manage/change-password', authAdmin, hodOnly, async (req, res) => {
+    try {
+        const { userId, newPassword } = req.body;
+        if (!userId || !newPassword) {
+            return res.status(400).json({ message: 'User ID and new password are required' });
+        }
+        if (newPassword.length < 6) {
+            return res.status(400).json({ message: 'Password must be at least 6 characters' });
+        }
+
+        const target = await Admin.findById(userId);
+        if (!target) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        if (target.role === 'hod') {
+            return res.status(403).json({ message: 'Cannot modify HOD accounts' });
+        }
+
+        const bcrypt = require('bcryptjs');
+        const salt = await bcrypt.genSalt(10);
+        target.password = await bcrypt.hash(newPassword, salt);
+        await target.save();
+
+        res.json({
+            message: 'Password updated successfully',
+            userId: target._id,
+            name: target.name,
+            role: target.role
+        });
+    } catch (err) {
+        console.error('Change password error:', err);
+        res.status(500).json({ message: 'Error changing password' });
+    }
+});
+
+/**
+ * PUT /api/admin/manage/toggle-status
+ * HOD enables or disables a faculty/labadmin account.
+ */
+router.put('/manage/toggle-status', authAdmin, hodOnly, async (req, res) => {
+    try {
+        const { userId, isActive } = req.body;
+        if (!userId) {
+            return res.status(400).json({ message: 'User ID is required' });
+        }
+
+        const target = await Admin.findById(userId);
+        if (!target) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        if (target.role === 'hod') {
+            return res.status(403).json({ message: 'Cannot modify HOD accounts' });
+        }
+
+        target.isActive = isActive !== undefined ? isActive : !target.isActive;
+        await target.save();
+
+        res.json({
+            message: `Account ${target.isActive ? 'activated' : 'disabled'} successfully`,
+            userId: target._id,
+            name: target.name,
+            role: target.role,
+            isActive: target.isActive
+        });
+    } catch (err) {
+        console.error('Toggle status error:', err);
+        res.status(500).json({ message: 'Error updating account status' });
+    }
+});
+
 module.exports = router;
+
+
+
+

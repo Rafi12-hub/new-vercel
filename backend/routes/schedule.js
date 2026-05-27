@@ -1,9 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
-const Admin = require('../models/Admin');
-const ScheduleEvent = require('../models/ScheduleEvent');
-const User = require('../models/User');
+const { schedules, students } = require('../config/dbHelper');
+const { admin } = require('../config/firebase');
 
 // Auth Middleware (Supports both Admin and User)
 const authAny = (req, res, next) => {
@@ -19,53 +18,64 @@ const authAny = (req, res, next) => {
     }
 };
 
-// @route   GET api/schedule
-// @desc    Get schedule events based on role
 router.get('/', authAny, async (req, res) => {
     try {
-        let query = {};
+        let eventsSnap;
         if (req.admin) {
-            if (req.admin.role === 'labadmin' || req.admin.role === 'admin') {
-                query.labName = req.admin.assignedLab;
+            if (req.admin.role === 'labadmin' || req.admin.role === 'faculty') {
+                eventsSnap = await schedules.where('labName', '==', req.admin.assignedLab).get();
+            } else {
+                eventsSnap = await schedules.get();
             }
-            // Superadmin sees everything
         } else if (req.user) {
-            // Student sees events for their lab
-            const user = await User.findById(req.user.id);
-            query.labName = user.assignedLab || user.selectedLab;
+            const userDoc = await students.doc(req.user.id).get();
+            if (!userDoc.exists) return res.status(404).json({ message: 'User not found' });
+            const user = userDoc.data();
+            const labName = user.assignedLab || user.selectedLab;
+            eventsSnap = await schedules.where('labName', '==', labName).get();
         }
 
-        const events = await ScheduleEvent.find(query).populate('createdBy', 'name email role');
+        const events = [];
+        for (const doc of eventsSnap.docs) {
+            const data = doc.data();
+            data.id = doc.id;
+            data._id = doc.id; // For backwards compatibility
+            if (data.start && data.start.toDate) data.start = data.start.toDate();
+            if (data.end && data.end.toDate) data.end = data.end.toDate();
+            events.push(data);
+        }
         res.json(events);
     } catch (err) {
+        console.error(err);
         res.status(500).send('Server error');
     }
 });
 
-// @route   POST api/schedule
-// @desc    Create a new schedule event
 router.post('/', authAny, async (req, res) => {
     try {
         if (!req.admin) return res.status(403).json({ message: 'Forbidden' });
         
         const { title, description, start, end, type, labName, section, year, color } = req.body;
         
-        const newEvent = new ScheduleEvent({
+        const newEventRef = await schedules.add({
             title,
             description,
-            start,
-            end,
+            start: new Date(start),
+            end: new Date(end),
             type,
             labName: labName || req.admin.assignedLab,
             section,
             year,
             createdBy: req.admin.id,
-            color
+            color,
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        await newEvent.save();
+        const newEventDoc = await newEventRef.get();
+        const newEvent = newEventDoc.data();
+        newEvent.id = newEventDoc.id;
+        newEvent._id = newEventDoc.id;
         
-        // Notify via Socket.io if available
         if (req.app.locals.io) {
             req.app.locals.io.emit('scheduleUpdated', newEvent);
         }
@@ -77,20 +87,19 @@ router.post('/', authAny, async (req, res) => {
     }
 });
 
-// @route   DELETE api/schedule/:id
-// @desc    Delete an event
 router.delete('/:id', authAny, async (req, res) => {
     try {
         if (!req.admin) return res.status(403).json({ message: 'Forbidden' });
-        const event = await ScheduleEvent.findById(req.params.id);
-        if (!event) return res.status(404).json({ message: 'Event not found' });
+        const eventRef = schedules.doc(req.params.id);
+        const eventDoc = await eventRef.get();
+        if (!eventDoc.exists) return res.status(404).json({ message: 'Event not found' });
 
-        // Lab admins can only delete their own lab's events
-        if (!['superadmin', 'hod'].includes(req.admin.role) && event.labName !== req.admin.assignedLab) {
+        const event = eventDoc.data();
+        if (!['hod'].includes(req.admin.role) && event.labName !== req.admin.assignedLab) {
             return res.status(403).json({ message: 'Forbidden' });
         }
 
-        await ScheduleEvent.findByIdAndDelete(req.params.id);
+        await eventRef.delete();
         
         if (req.app.locals.io) {
             req.app.locals.io.emit('scheduleUpdated', { deletedId: req.params.id });

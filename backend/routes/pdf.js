@@ -1,10 +1,25 @@
 const express = require('express');
 const router = express.Router();
 const jsPDF = require('jspdf');
+const fs = require('fs');
+const path = require('path');
 const User = require('../models/User');
 const Submission = require('../models/Submission');
 const Question = require('../models/Question');
 const jwt = require('jsonwebtoken');
+
+const rgmLogoPath = path.join(__dirname, '../../frontend/public/logos/rgm-logo.jpeg');
+const rippleLogoPath = path.join(__dirname, '../../frontend/public/logos/ripple-logo.png');
+
+function imageToBase64(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+    const data = fs.readFileSync(filePath);
+    return `data:${mimeType};base64,${data.toString('base64')}`;
+}
+
+const rgmLogoBase64 = imageToBase64(rgmLogoPath);
+const rippleLogoBase64 = imageToBase64(rippleLogoPath);
 
 const languageVariants = (language) => {
     const value = String(language || '');
@@ -32,7 +47,7 @@ const authAdmin = (req, res, next) => {
 // Generate PDF for a specific student and lab
 router.post('/generate/:studentId/:labName', authAdmin, async (req, res) => {
     try {
-        if (!['labadmin', 'admin', 'superadmin', 'hod', 'faculty'].includes(req.role)) {
+        if (!['hod', 'faculty', 'labadmin'].includes(req.role)) {
             return res.status(403).json({ message: 'Unauthorized' });
         }
 
@@ -75,102 +90,156 @@ router.post('/generate/:studentId/:labName', authAdmin, async (req, res) => {
         const pageHeight = doc.internal.pageSize.getHeight();
         const margin = 15;
         const contentWidth = pageWidth - 2 * margin;
+        let pageNum = 1;
         let yPosition = margin;
 
-        // Set font
-        doc.setFont('times');
+        function addFooter() {
+            doc.setFontSize(8);
+            doc.setTextColor(150, 150, 150);
+            doc.setFont('times', 'normal');
+            doc.text(`Page ${pageNum}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+            doc.text('RGMCSE COMPILER', pageWidth - margin, pageHeight - 10, { align: 'right' });
+            doc.setTextColor(0, 0, 0);
+        }
 
-        // Add watermark
-        doc.setTextColor(200, 200, 200);
-        doc.setFontSize(40);
-        doc.text(student.regNo, pageWidth / 2, pageHeight / 2, { 
-            align: 'center',
-            angle: 45,
-            opacity: 0.1 
-        });
-        doc.setTextColor(0, 0, 0);
+        function addWatermark() {
+            doc.setTextColor(230, 230, 230);
+            doc.setFontSize(50);
+            doc.setFont('times', 'italic');
+            doc.text(student.regNo, pageWidth / 2, pageHeight / 2, { align: 'center', angle: 45 });
+            doc.setTextColor(0, 0, 0);
+        }
 
-        // Title
+        addWatermark();
+        addFooter();
+
+        // Header row with logos
+        const logoSize = 30;
+
+        // Left logo (college)
+        try {
+            doc.addImage(rgmLogoBase64, 'JPEG', margin, margin, logoSize, logoSize);
+        } catch (e) {
+            // fallback if image fails
+        }
+
+        // Right logo (department)
+        try {
+            doc.addImage(rippleLogoBase64, 'PNG', pageWidth - margin - logoSize, margin, logoSize, logoSize);
+        } catch (e) {
+            // fallback if image fails
+        }
+
+        // Title centered between logos
         doc.setFontSize(16);
         doc.setFont('times', 'bold');
-        doc.text('RGMCSE COMPILER - Final Week Report', margin, yPosition);
-        yPosition += 10;
+        doc.setTextColor(0, 0, 0);
+        doc.text('RGMCSE COMPILER', pageWidth / 2, margin + logoSize / 2 + 2, { align: 'center' });
 
-        // College info
+        // Separator line
+        yPosition = margin + logoSize + 8;
+        doc.setDrawColor(200, 200, 200);
+        doc.line(margin, yPosition, pageWidth - margin, yPosition);
+        yPosition += 8;
+
+        // Student info section
+        doc.setFontSize(12);
+        doc.setFont('times', 'bold');
+        doc.text('Student Information', margin, yPosition);
+        yPosition += 7;
+
         doc.setFontSize(10);
         doc.setFont('times', 'normal');
-        doc.text('Rajeev Gandhi Memorial College of Engineering and Technology', margin, yPosition);
+        const studentInfo = [
+            `Name: ${student.name}`,
+            `Registration Number: ${student.regNo}`,
+            `Year: ${student.year}`,
+            `Lab: ${req.params.labName}`,
+            `Total Points: ${student.totalPoints}`
+        ];
+        for (const info of studentInfo) {
+            doc.text(info, margin + 3, yPosition);
+            yPosition += 5;
+        }
         yPosition += 5;
-        doc.text('Department of Computer Science & Engineering', margin, yPosition);
-        yPosition += 10;
-
-        // Student info
-        doc.setFont('times', 'bold');
-        doc.text('Student Information:', margin, yPosition);
-        yPosition += 5;
-        doc.setFont('times', 'normal');
-        doc.text(`Name: ${student.name}`, margin + 5, yPosition);
-        yPosition += 5;
-        doc.text(`Registration Number: ${student.regNo}`, margin + 5, yPosition);
-        yPosition += 5;
-        doc.text(`Year: ${student.year}`, margin + 5, yPosition);
-        yPosition += 5;
-        doc.text(`Lab: ${req.params.labName}`, margin + 5, yPosition);
-        yPosition += 5;
-        doc.text(`Total Points: ${student.totalPoints}`, margin + 5, yPosition);
-        yPosition += 10;
 
         // Questions and submissions
+        doc.setFontSize(12);
         doc.setFont('times', 'bold');
-        doc.text('Submitted Solutions:', margin, yPosition);
+        doc.text('Submitted Solutions', margin, yPosition);
         yPosition += 8;
 
         for (let i = 0; i < finalWeekQuestions.length; i++) {
             const question = finalWeekQuestions[i];
             const submission = submissionMap[question._id.toString()];
 
-            if (yPosition > pageHeight - 30) {
+            if (yPosition > pageHeight - 40) {
+                addFooter();
                 doc.addPage();
+                pageNum++;
                 yPosition = margin;
+                addWatermark();
+                addFooter();
             }
 
             // Question title
+            doc.setFontSize(11);
             doc.setFont('times', 'bold');
             doc.text(`${i + 1}. ${question.title}`, margin, yPosition);
-            yPosition += 5;
+            yPosition += 6;
 
-            // Question details
-            doc.setFont('times', 'normal');
-            doc.setFontSize(8);
-            
             // Input Format
+            doc.setFontSize(9);
+            doc.setFont('times', 'bold');
             doc.text('Input Format:', margin + 2, yPosition);
-            yPosition += 3;
-            const inputLines = doc.splitTextToSize(question.inputFormat, contentWidth - 10);
+            yPosition += 4;
+            doc.setFont('times', 'normal');
+            const inputLines = doc.splitTextToSize(question.inputFormat || 'N/A', contentWidth - 10);
             doc.text(inputLines, margin + 5, yPosition);
-            yPosition += inputLines.length * 2.5 + 2;
+            yPosition += inputLines.length * 3 + 2;
 
             // Output Format
+            if (yPosition > pageHeight - 40) {
+                addFooter();
+                doc.addPage();
+                pageNum++;
+                yPosition = margin;
+                addWatermark();
+                addFooter();
+            }
+            doc.setFont('times', 'bold');
             doc.text('Output Format:', margin + 2, yPosition);
-            yPosition += 3;
-            const outputLines = doc.splitTextToSize(question.outputFormat, contentWidth - 10);
+            yPosition += 4;
+            doc.setFont('times', 'normal');
+            const outputLines = doc.splitTextToSize(question.outputFormat || 'N/A', contentWidth - 10);
             doc.text(outputLines, margin + 5, yPosition);
-            yPosition += outputLines.length * 2.5 + 5;
+            yPosition += outputLines.length * 3 + 5;
 
             // Student's submitted code
+            if (yPosition > pageHeight - 40) {
+                addFooter();
+                doc.addPage();
+                pageNum++;
+                yPosition = margin;
+                addWatermark();
+                addFooter();
+            }
             doc.setFont('times', 'bold');
-            doc.setFontSize(9);
+            doc.setFontSize(10);
             doc.text(`Student Code (${submission.language.toUpperCase()}):`, margin, yPosition);
-            yPosition += 4;
+            yPosition += 5;
 
             doc.setFont('courier');
             doc.setFontSize(7);
-            const codeLines = doc.splitTextToSize(submission.code, contentWidth - 5);
-            const maxCodeLines = Math.min(codeLines.length, 20); // Limit to 20 lines per page
-            for (let j = 0; j < maxCodeLines; j++) {
-                if (yPosition > pageHeight - 15) {
+            const codeLines = doc.splitTextToSize(submission.code || '', contentWidth - 5);
+            for (let j = 0; j < codeLines.length; j++) {
+                if (yPosition > pageHeight - 20) {
+                    addFooter();
                     doc.addPage();
+                    pageNum++;
                     yPosition = margin;
+                    addWatermark();
+                    addFooter();
                 }
                 doc.text(codeLines[j], margin + 2, yPosition);
                 yPosition += 2.5;
@@ -178,25 +247,16 @@ router.post('/generate/:studentId/:labName', authAdmin, async (req, res) => {
 
             // Submission metadata
             doc.setFont('times', 'normal');
-            doc.setFontSize(8);
-            yPosition += 2;
-            doc.text(`Points Earned: ${submission.earnedPoints || submission.basePoints}`, margin + 2, yPosition);
+            doc.setFontSize(9);
             yPosition += 3;
+            doc.text(`Points Earned: ${submission.earnedPoints || submission.basePoints}`, margin + 2, yPosition);
+            yPosition += 4;
             doc.text(`Submitted: ${new Date(submission.submittedAt).toLocaleString()}`, margin + 2, yPosition);
-            yPosition += 6;
+            yPosition += 8;
         }
 
-        // Add signature section
-        if (yPosition > pageHeight - 30) {
-            doc.addPage();
-            yPosition = margin;
-        }
-
-        doc.setFont('times', 'normal');
-        doc.setFontSize(10);
-        yPosition = pageHeight - 30;
-        doc.text('Lab Instructor Signature: ___________________', margin, yPosition);
-        doc.text('Date: ___________________', pageWidth / 2, yPosition);
+        // Add footer to last page
+        addFooter();
 
         // Save and send PDF
         const fileName = `${student.regNo}_${req.params.labName}_FinalWeek.pdf`;
@@ -212,7 +272,7 @@ router.post('/generate/:studentId/:labName', authAdmin, async (req, res) => {
 // Batch generate PDFs for all students in a lab
 router.post('/generate-batch/:labName', authAdmin, async (req, res) => {
     try {
-        if (!['labadmin', 'admin', 'superadmin', 'hod', 'faculty'].includes(req.role)) {
+        if (!['hod', 'faculty', 'labadmin'].includes(req.role)) {
             return res.status(403).json({ message: 'Unauthorized' });
         }
 

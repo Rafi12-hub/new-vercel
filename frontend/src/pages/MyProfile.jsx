@@ -22,6 +22,7 @@ const MyProfile = () => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('profile');
+    const [pwdState, setPwdState] = useState({ current: '', new: '', confirm: '', loading: false, msg: '', error: false });
     const [stats, setStats] = useState({
         easy: 0, medium: 0, hard: 0, totalSolved: 0,
         totalSubmissions: 0, acceptedSubmissions: 0, successPercentage: 0,
@@ -145,6 +146,26 @@ const MyProfile = () => {
     const handleLogout = () => {
         logout();
         navigate('/login');
+    };
+
+    const handlePwdChange = async (e) => {
+        e.preventDefault();
+        if (pwdState.new !== pwdState.confirm) {
+            return setPwdState(p => ({ ...p, msg: "New passwords do not match", error: true }));
+        }
+        setPwdState(p => ({ ...p, loading: true, msg: '', error: false }));
+        try {
+            await axios.put('http://localhost:5000/api/auth/change-password', {
+                currentPassword: pwdState.current,
+                newPassword: pwdState.new
+            }, {
+                headers: { 'x-auth-token': localStorage.getItem('token') }
+            });
+            setPwdState({ current: '', new: '', confirm: '', loading: false, msg: "Password updated successfully!", error: false });
+            setTimeout(() => setPwdState(p => ({ ...p, msg: '' })), 4000);
+        } catch(err) {
+            setPwdState(p => ({ ...p, loading: false, msg: err.response?.data?.message || "Failed to update password", error: true }));
+        }
     };
 
     return (
@@ -360,11 +381,114 @@ const MyProfile = () => {
                         </>
                     )}
 
-                    {activeTab !== 'profile' && (
-                        <div className="card" style={{ padding: '4rem 2rem', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                            <Settings size={64} color="var(--primary)" style={{ opacity: 0.5, marginBottom: '1.5rem' }} />
-                            <h2 style={{ marginBottom: '1rem', color: 'var(--text-heading-dark)' }}>{SETTINGS_TABS.find(t => t.id === activeTab)?.label}</h2>
-                            <p style={{ color: 'var(--text-muted-dark)', maxWidth: '400px' }}>This section is currently under development. Settings for {SETTINGS_TABS.find(t => t.id === activeTab)?.label.toLowerCase()} will be available in a future update.</p>
+                    {activeTab === 'password' && (
+                        <div className="card" style={{ padding: '2rem', maxWidth: '600px' }}>
+                            <h2 style={{ margin: '0 0 1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem', color: 'var(--text-heading-dark)' }}>Change Password</h2>
+                            
+                            <form onSubmit={handlePwdChange} style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-muted-dark)' }}>Current Password</label>
+                                    <input 
+                                        type="password" 
+                                        required
+                                        value={pwdState.current}
+                                        onChange={e => setPwdState(p => ({ ...p, current: e.target.value }))}
+                                        className="form-control"
+                                        style={{ width: '100%', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '8px', color: '#fff' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-muted-dark)' }}>New Password</label>
+                                    <input 
+                                        type="password" 
+                                        required
+                                        value={pwdState.new}
+                                        onChange={e => setPwdState(p => ({ ...p, new: e.target.value }))}
+                                        className="form-control"
+                                        style={{ width: '100%', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '8px', color: '#fff' }}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', color: 'var(--text-muted-dark)' }}>Confirm New Password</label>
+                                    <input 
+                                        type="password" 
+                                        required
+                                        value={pwdState.confirm}
+                                        onChange={e => setPwdState(p => ({ ...p, confirm: e.target.value }))}
+                                        className="form-control"
+                                        style={{ width: '100%', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '8px', color: '#fff' }}
+                                    />
+                                </div>
+                                
+                                {pwdState.msg && (
+                                    <div style={{ padding: '10px', borderRadius: '8px', background: pwdState.error ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)', color: pwdState.error ? '#ef4444' : '#10b981', fontSize: '0.9rem' }}>
+                                        {pwdState.msg}
+                                    </div>
+                                )}
+
+                                <button 
+                                    type="submit" 
+                                    disabled={pwdState.loading}
+                                    className="btn btn-primary"
+                                    style={{ padding: '12px', marginTop: '0.5rem', fontWeight: 'bold' }}
+                                >
+                                    {pwdState.loading ? 'Updating...' : 'Update Password'}
+                                </button>
+                            </form>
+                        </div>
+                    )}
+
+                    {activeTab === 'appearance' && (
+                        <div className="card" style={{ padding: '2rem' }}>
+                            <h2 style={{ margin: '0 0 1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem', color: 'var(--text-heading-dark)' }}>Appearance</h2>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: '12px' }}>
+                                    <div>
+                                        <div style={{ fontWeight: 'bold', fontSize: '1.1rem', marginBottom: '0.25rem' }}>Theme</div>
+                                        <div style={{ color: 'var(--text-muted-dark)', fontSize: '0.9rem' }}>Select your preferred interface theme</div>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                        <button className="btn" style={{ background: 'var(--primary)', color: 'white' }}>Dark Mode</button>
+                                        <button className="btn" style={{ background: 'rgba(255,255,255,0.05)', color: 'gray', cursor: 'not-allowed' }}>Light Mode</button>
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1.5rem', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: '12px' }}>
+                                    <div>
+                                        <div style={{ fontWeight: 'bold', fontSize: '1.1rem', marginBottom: '0.25rem' }}>Global Font</div>
+                                        <div style={{ color: 'var(--text-muted-dark)', fontSize: '0.9rem' }}>The entire platform uses Times New Roman as requested</div>
+                                    </div>
+                                    <div style={{ padding: '6px 12px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', fontSize: '0.9rem', fontFamily: 'Times New Roman' }}>Times New Roman</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'account' && (
+                        <div className="card" style={{ padding: '2rem' }}>
+                            <h2 style={{ margin: '0 0 1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem', color: 'var(--text-heading-dark)' }}>Account Settings</h2>
+                            <p style={{ color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '1rem', borderRadius: '8px' }}>Profile updates are disabled by the Lab Administrator. Please contact your HOD to update your Name, Email, or Registration Number.</p>
+                        </div>
+                    )}
+
+                    {activeTab === 'privacy' && (
+                        <div className="card" style={{ padding: '2rem' }}>
+                            <h2 style={{ margin: '0 0 1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem', color: 'var(--text-heading-dark)' }}>Privacy & Security</h2>
+                            <p style={{ color: 'var(--text-muted-dark)' }}>Your session is active and secure. Lab submissions are strictly monitored.</p>
+                            <div style={{ marginTop: '1.5rem', padding: '1.5rem', border: '1px solid var(--border)', borderRadius: '12px', background: 'rgba(255,255,255,0.02)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                                    <Shield color="#10b981" />
+                                    <span style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>Active Session</span>
+                                </div>
+                                <div style={{ fontSize: '0.9rem', color: 'var(--text-muted-dark)' }}>Current IP Address: 127.0.0.1 (Localhost)</div>
+                                <div style={{ fontSize: '0.9rem', color: 'var(--text-muted-dark)' }}>Last Login: {new Date().toLocaleDateString()}</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {activeTab === 'notifications' && (
+                        <div className="card" style={{ padding: '2rem' }}>
+                            <h2 style={{ margin: '0 0 1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem', color: 'var(--text-heading-dark)' }}>Notifications</h2>
+                            <p style={{ color: 'var(--text-muted-dark)' }}>Notification preferences are managed globally by the institution. You will receive alerts for new tasks, submission results, and lab updates automatically.</p>
                         </div>
                     )}
                 </motion.div>

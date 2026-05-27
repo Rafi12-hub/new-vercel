@@ -1,4 +1,5 @@
 const cron = require('node-cron');
+const moment = require('moment-timezone');
 const WeeklyTask = require('./models/WeeklyTask');
 const User = require('./models/User');
 const Notification = require('./models/Notification');
@@ -8,13 +9,10 @@ const initScheduler = (socketIo) => {
     cron.schedule('* * * * *', async () => {
         try {
             const Admin = require('./models/Admin');
-            const now = new Date(
-                new Date().toLocaleString("en-US", {
-                    timeZone: "Asia/Kolkata"
-                })
-            );
-            const currentDay = now.toLocaleString('en-US', { weekday: 'long', timeZone: "Asia/Kolkata" });
-            const currentTime = now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+            const momentNow = moment().tz("Asia/Kolkata");
+            const now = momentNow.toDate(); // true UTC date for DB queries
+            const currentDay = momentNow.format('dddd');
+            const currentTime = momentNow.format('HH:mm');
             
             // 1. Check explicit unlockDateTime in WeeklyTask
             const tasksByDate = await WeeklyTask.find({

@@ -18,19 +18,45 @@ const seedData = async () => {
         await WeeklyTask.deleteMany();
         await ProgressTracking.deleteMany();
 
-        // Create Super Admins
+        // Create HOD
         await Admin.create({
             name: 'HOD CSE',
             email: 'hod@rgmcet.edu',
             password: 'HOD@1907',
-            role: 'superadmin'
+            role: 'hod'
         });
         await Admin.create({
             name: 'Syed Aman',
             email: 'syedamanmirzanulla@gmail.com',
             password: 'Syed@1907',
-            role: 'superadmin'
+            role: 'hod'
         });
+
+        // Create Faculty
+        const facultyAccounts = [
+            { lab: 'C', email: 'faculty.c@rgm.edu', password: 'FacultyC@123' },
+            { lab: 'DS', email: 'faculty.ds@rgm.edu', password: 'FacultyDS@123' },
+            { lab: 'ADSAA', email: 'faculty.adsaa@rgm.edu', password: 'FacultyADSAA@123' },
+            { lab: 'OS', email: 'faculty.os@rgm.edu', password: 'FacultyOS@123' },
+            { lab: 'CN', email: 'faculty.cn@rgm.edu', password: 'FacultyCN@123' },
+            { lab: 'JAVA', email: 'faculty.java@rgm.edu', password: 'FacultyJAVA@123' },
+            { lab: 'PYTHON', email: 'faculty.python@rgm.edu', password: 'FacultyPYTHON@123' },
+            { lab: 'DBMS', email: 'faculty.dbms@rgm.edu', password: 'FacultyDBMS@123' },
+            { lab: 'ML', email: 'faculty.ml@rgm.edu', password: 'FacultyML@123' },
+            { lab: 'CNS', email: 'faculty.cns@rgm.edu', password: 'FacultyCNS@123' },
+            { lab: 'FSAD', email: 'faculty.fsad@rgm.edu', password: 'FacultyFSAD@123' },
+            { lab: 'AI', email: 'faculty.ai@rgm.edu', password: 'FacultyAI@123' },
+        ];
+
+        for (const f of facultyAccounts) {
+            await Admin.create({
+                name: `${f.lab} Faculty`,
+                email: f.email,
+                password: f.password,
+                role: 'faculty',
+                assignedLab: f.lab
+            });
+        }
 
         // Create Lab Admins
         const labAdmins = [
@@ -42,7 +68,7 @@ const seedData = async () => {
             { lab: 'JAVA', email: 'java.labadmin@rgm.edu', password: 'JAVA@123' },
             { lab: 'PYTHON', email: 'python.labadmin@rgm.edu', password: 'PYTHON@123' },
             { lab: 'DBMS', email: 'dbms.labadmin@rgm.edu', password: 'DBMS@123' },
-            { lab: 'ML', email: 'ml.labadmin@rgm.edu', password: 'ML@123' },
+            { lab: 'ML', email: 'ml.labadmin@rgm.edu', password: 'ml.labadmin@rgm.edu' },
             { lab: 'CNS', email: 'cns.labadmin@rgm.edu', password: 'CNS@123' },
             { lab: 'FSAD', email: 'fsad.labadmin@rgm.edu', password: 'FSAD@123' },
             { lab: 'AI', email: 'ai.labadmin@rgm.edu', password: 'AI@123' },
