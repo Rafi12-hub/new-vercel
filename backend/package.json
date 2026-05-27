@@ -27,6 +27,7 @@
     "node-cron": "^4.2.1",
     "nodemon": "^3.1.14",
     "socket.io": "^4.8.3",
+    "serverless-http": "^3.0.0",
     "tree-kill": "^1.2.2"
   }
 }

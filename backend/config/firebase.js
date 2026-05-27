@@ -2,7 +2,12 @@ const admin = require('firebase-admin');
 require('dotenv').config();
 
 if (!admin.apps.length) {
-    if (process.env.FIREBASE_PROJECT_ID) {
+    if (process.env.FIRESTORE_EMULATOR_HOST || process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+        admin.initializeApp({
+            projectId: process.env.FIREBASE_PROJECT_ID || 'rgmcse-compiler',
+            storageBucket: process.env.FIREBASE_STORAGE_BUCKET
+        });
+    } else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY && !process.env.FIREBASE_PRIVATE_KEY.includes('XXXXXXXXXXXXXXXXXX')) {
         admin.initializeApp({
             credential: admin.credential.cert({
                 projectId: process.env.FIREBASE_PROJECT_ID,

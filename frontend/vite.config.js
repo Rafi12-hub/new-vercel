@@ -19,10 +19,16 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'monaco': ['@monaco-editor/react'],
-          'charts': ['recharts'],
-          'motion': ['framer-motion']
+        manualChunks(id) {
+          if (id.includes('@monaco-editor/react') || id.includes('monaco-editor')) {
+            return 'monaco';
+          }
+          if (id.includes('recharts')) {
+            return 'charts';
+          }
+          if (id.includes('framer-motion')) {
+            return 'motion';
+          }
         }
       }
     }

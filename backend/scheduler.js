@@ -1,136 +1,146 @@
 const cron = require('node-cron');
 const moment = require('moment-timezone');
-const WeeklyTask = require('./models/WeeklyTask');
-const User = require('./models/User');
-const Notification = require('./models/Notification');
+const { db } = require('./config/firebase');
+const { weeklyTasks, students, notifications } = require('./config/dbHelper');
 
 // Run every minute to check for unlock schedules
 const initScheduler = (socketIo) => {
     cron.schedule('* * * * *', async () => {
         try {
-            const Admin = require('./models/Admin');
             const momentNow = moment().tz("Asia/Kolkata");
-            const now = momentNow.toDate(); // true UTC date for DB queries
+            const now = momentNow.toDate(); // true date for DB queries
             const currentDay = momentNow.format('dddd');
             const currentTime = momentNow.format('HH:mm');
+
+            // 1. Check explicit unlockDateTime in weeklyTasks
+            const tasksSnap = await weeklyTasks.where('isUnlocked', '==', false).get();
             
-            // 1. Check explicit unlockDateTime in WeeklyTask
-            const tasksByDate = await WeeklyTask.find({
-                isUnlocked: false,
-                unlockDateTime: { $lte: now }
-            });
-
-            // 2. Check recurring Faculty schedules (Unlock tasks if within schedule)
-            const faculties = await Admin.find({ 
-                role: { $in: ['admin', 'labadmin'] },
-                labDay: currentDay
-            });
-
-            const tasksBySchedule = [];
-            for (const faculty of faculties) {
-                if (!faculty.startTime || !faculty.endTime) continue;
+            for (const doc of tasksSnap.docs) {
+                const task = doc.data();
+                const taskId = doc.id;
                 
-                // If current time is within the lab slot (or just passed start time)
-                if (currentTime >= faculty.startTime) {
-                    // Find the next available week for this lab
-                    const task = await WeeklyTask.findOne({
-                        labName: faculty.assignedLab,
-                        isUnlocked: false
-                    }).sort({ weekNumber: 1 });
-                    
-                    if (task) tasksBySchedule.push(task);
+                let shouldUnlock = false;
+                
+                // If unlockDateTime is set and <= now
+                if (task.unlockDateTime) {
+                    const unlockDate = task.unlockDateTime.toDate ? task.unlockDateTime.toDate() : new Date(task.unlockDateTime);
+                    if (unlockDate <= now) {
+                        shouldUnlock = true;
+                    }
                 }
-            }
-
-            const labAdmins = await Admin.find({
-                role: 'labadmin',
-                weeklyUnlockDay: currentDay,
-                weeklyUnlockTime: { $nin: [null, ''] }
-            });
-
-            const tasksByLabAdminSchedule = [];
-            for (const la of labAdmins) {
-                if (!la.assignedLab || !la.weeklyUnlockTime) continue;
-                if (currentTime < la.weeklyUnlockTime) continue;
-                const task = await WeeklyTask.findOne({
-                    labName: la.assignedLab,
-                    isUnlocked: false
-                }).sort({ weekNumber: 1 });
-                if (task) tasksByLabAdminSchedule.push(task);
-            }
-
-            // Combine and unique tasks
-            const allTasks = [...tasksByDate, ...tasksBySchedule, ...tasksByLabAdminSchedule];
-            const uniqueTaskIds = [...new Set(allTasks.map(t => t._id.toString()))];
-            
-            for (const id of uniqueTaskIds) {
-                const task = await WeeklyTask.findById(id);
-                if (!task || task.isUnlocked) continue;
-
-                task.isUnlocked = true;
-                await task.save();
                 
-                console.log(`[SCHEDULER] Auto-Unlocked Week ${task.weekNumber} for ${task.labName}`);
+                // If not unlocked yet, check if there is an active faculty/labadmin schedule matching
+                if (!shouldUnlock) {
+                    // Check users collection (for faculty/labadmins)
+                    const usersSnap = await db.collection('users')
+                        .where('role', 'in', ['faculty', 'labadmin'])
+                        .where('assignedLab', '==', task.labName)
+                        .get();
+                        
+                    for (const userDoc of usersSnap.docs) {
+                        const user = userDoc.data();
+                        
+                        // Check Faculty recurring labDay schedule
+                        if (user.labDay === currentDay && user.startTime) {
+                            if (currentTime >= user.startTime) {
+                                shouldUnlock = true;
+                                break;
+                            }
+                        }
+                        
+                        // Check Lab Admin weeklyUnlock schedule
+                        if (user.weeklyUnlockDay === currentDay && user.weeklyUnlockTime) {
+                            if (currentTime >= user.weeklyUnlockTime) {
+                                shouldUnlock = true;
+                                break;
+                            }
+                        }
+                    }
+                }
                 
-                // Find all students matching task.labName
-                const students = await User.find({ selectedLab: task.labName });
-                
-                for (const student of students) {
-                    const newNotification = new Notification({
-                        userId: student._id,
-                        text: `Week ${task.weekNumber} is now unlocked for ${task.labName}`,
-                        type: 'task',
-                        unread: true
-                    });
-                    await newNotification.save();
-
+                if (shouldUnlock) {
+                    await weeklyTasks.doc(taskId).update({ isUnlocked: true });
+                    console.log(`[SCHEDULER] Auto-Unlocked Week ${task.weekNumber} for ${task.labName}`);
+                    
+                    // Find all students matching task.labName
+                    const studentsSnap = await students.where('assignedLab', '==', task.labName).get();
+                    
+                    for (const studentDoc of studentsSnap.docs) {
+                        const studentId = studentDoc.id;
+                        
+                        // Create notification
+                        const notifRef = await notifications.add({
+                            userId: studentId,
+                            text: `Week ${task.weekNumber} is now unlocked for ${task.labName}`,
+                            type: 'task',
+                            unread: true,
+                            createdAt: new Date().toISOString()
+                        });
+                        
+                        if (socketIo) {
+                            socketIo.emit('newNotification', {
+                                userId: studentId,
+                                notification: {
+                                    id: notifRef.id,
+                                    userId: studentId,
+                                    text: `Week ${task.weekNumber} is now unlocked for ${task.labName}`,
+                                    type: 'task',
+                                    unread: true
+                                }
+                            });
+                        }
+                    }
+                    
                     if (socketIo) {
-                        socketIo.emit('newNotification', {
-                            userId: student._id,
-                            notification: newNotification
+                        socketIo.emit('weekUnlocked', {
+                            labName: task.labName,
+                            weekNumber: task.weekNumber,
+                            message: `Week ${task.weekNumber} for ${task.labName} is now unlocked!`
                         });
                     }
                 }
-
-                if (socketIo) {
-                    const update = {
-                        labName: task.labName,
-                        weekNumber: task.weekNumber,
-                        message: `Week ${task.weekNumber} for ${task.labName} is now unlocked!`
-                    };
-                    socketIo.emit('weekUnlocked', update);
-                }
             }
 
-            // 3. Check deadlineDateTime for lab lock notifications
-            const tasksByDeadline = await WeeklyTask.find({
-                deadlineDateTime: { $lte: now }
-            });
-
-            for (const task of tasksByDeadline) {
-                const checkNotified = await Notification.findOne({
-                    text: `Lab Locked: Week ${task.weekNumber} is now locked for submissions!`,
-                    type: 'danger'
-                });
-
-                if (!checkNotified) {
-                    console.log(`[SCHEDULER] Auto-Locked Week ${task.weekNumber} for ${task.labName}`);
-                    
-                    const students = await User.find({ selectedLab: task.labName });
-                    for (const student of students) {
-                        const newNotification = new Notification({
-                            userId: student._id,
-                            text: `Lab Locked: Week ${task.weekNumber} is now locked for submissions!`,
-                            type: 'danger',
-                            unread: true
-                        });
-                        await newNotification.save();
-
-                        if (socketIo) {
-                            socketIo.emit('newNotification', {
-                                userId: student._id,
-                                notification: newNotification
-                            });
+            // 2. Check deadlineDateTime for lab lock notifications
+            const activeTasksSnap = await weeklyTasks.get();
+            for (const doc of activeTasksSnap.docs) {
+                const task = doc.data();
+                if (task.deadlineDateTime) {
+                    const deadline = task.deadlineDateTime.toDate ? task.deadlineDateTime.toDate() : new Date(task.deadlineDateTime);
+                    if (deadline <= now) {
+                        // Check if we already notified
+                        const notifiedSnap = await notifications
+                            .where('text', '==', `Lab Locked: Week ${task.weekNumber} is now locked for submissions!`)
+                            .where('type', '==', 'danger')
+                            .limit(1)
+                            .get();
+                            
+                        if (notifiedSnap.empty) {
+                            console.log(`[SCHEDULER] Auto-Locked Week ${task.weekNumber} for ${task.labName}`);
+                            const studentsSnap = await students.where('assignedLab', '==', task.labName).get();
+                            for (const studentDoc of studentsSnap.docs) {
+                                const studentId = studentDoc.id;
+                                const notifRef = await notifications.add({
+                                    userId: studentId,
+                                    text: `Lab Locked: Week ${task.weekNumber} is now locked for submissions!`,
+                                    type: 'danger',
+                                    unread: true,
+                                    createdAt: new Date().toISOString()
+                                });
+                                
+                                if (socketIo) {
+                                    socketIo.emit('newNotification', {
+                                        userId: studentId,
+                                        notification: {
+                                            id: notifRef.id,
+                                            userId: studentId,
+                                            text: `Lab Locked: Week ${task.weekNumber} is now locked for submissions!`,
+                                            type: 'danger',
+                                            unread: true
+                                        }
+                                    });
+                                }
+                            }
                         }
                     }
                 }

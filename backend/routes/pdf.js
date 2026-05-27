@@ -8,18 +8,32 @@ const Submission = require('../models/Submission');
 const Question = require('../models/Question');
 const jwt = require('jsonwebtoken');
 
-const rgmLogoPath = path.join(__dirname, '../../frontend/public/logos/rgm-logo.jpeg');
-const rippleLogoPath = path.join(__dirname, '../../frontend/public/logos/ripple-logo.png');
+const rgmLogoPath = path.join(__dirname, '../public/logos/rgm-logo.jpeg');
+const rippleLogoPath = path.join(__dirname, '../public/logos/ripple-logo.png');
 
 function imageToBase64(filePath) {
-    const ext = path.extname(filePath).toLowerCase();
-    const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
-    const data = fs.readFileSync(filePath);
-    return `data:${mimeType};base64,${data.toString('base64')}`;
+    try {
+        if (!fs.existsSync(filePath)) {
+            console.warn(`[PDF WARNING] Logo file not found: ${filePath}`);
+            return '';
+        }
+        const ext = path.extname(filePath).toLowerCase();
+        const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+        const data = fs.readFileSync(filePath);
+        return `data:${mimeType};base64,${data.toString('base64')}`;
+    } catch (err) {
+        console.error(`[PDF ERROR] Error encoding image ${filePath}:`, err.message);
+        return '';
+    }
 }
 
-const rgmLogoBase64 = imageToBase64(rgmLogoPath);
-const rippleLogoBase64 = imageToBase64(rippleLogoPath);
+let rgmLogoBase64 = '';
+let rippleLogoBase64 = '';
+
+function initLogos() {
+    if (!rgmLogoBase64) rgmLogoBase64 = imageToBase64(rgmLogoPath);
+    if (!rippleLogoBase64) rippleLogoBase64 = imageToBase64(rippleLogoPath);
+}
 
 const languageVariants = (language) => {
     const value = String(language || '');
@@ -47,6 +61,7 @@ const authAdmin = (req, res, next) => {
 // Generate PDF for a specific student and lab
 router.post('/generate/:studentId/:labName', authAdmin, async (req, res) => {
     try {
+        initLogos();
         if (!['hod', 'faculty', 'labadmin'].includes(req.role)) {
             return res.status(403).json({ message: 'Unauthorized' });
         }
@@ -272,6 +287,7 @@ router.post('/generate/:studentId/:labName', authAdmin, async (req, res) => {
 // Batch generate PDFs for all students in a lab
 router.post('/generate-batch/:labName', authAdmin, async (req, res) => {
     try {
+        initLogos();
         if (!['hod', 'faculty', 'labadmin'].includes(req.role)) {
             return res.status(403).json({ message: 'Unauthorized' });
         }
